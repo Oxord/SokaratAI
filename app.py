@@ -832,6 +832,16 @@ def make_skills_skip_action() -> list[cl.Action]:
     ]
 
 
+def make_finish_interview_action() -> list[cl.Action]:
+    return [
+        cl.Action(
+            name="finish_interview",
+            label="🏁 Завершить интервью",
+            payload={"value": "finish"},
+        )
+    ]
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _init_session():
@@ -989,39 +999,21 @@ def _stop_question_timer() -> float:
 
 # ── Chainlit handlers ─────────────────────────────────────────────────────────
 
-@cl.set_starters
-async def starters():
-    # Иконки на Starter ожидают URL, а не lucide-имена — оставляем без иконок,
-    # эмодзи в лейбле визуально различает варианты.
-    return [
-        cl.Starter(
-            label="🐍 Python Developer",
-            message="Python Developer",
-        ),
-        cl.Starter(
-            label="💻 Frontend Developer",
-            message="Frontend Developer",
-        ),
-        cl.Starter(
-            label="🧭 Product Manager",
-            message="Product Manager",
-        ),
-        cl.Starter(
-            label="✏️ Другая роль…",
-            message="Другая роль…",
-        ),
-    ]
-
-
 @cl.on_chat_start
 async def on_chat_start():
     _init_session()
+    await cl.Message(
+        content=(
+            "Добро пожаловать в **Сократ** — тренажёр собеседований.\n\n"
+            "**Выбери целевую роль с помощью кнопок ниже:**"
+        ),
+        actions=make_role_actions(),
+    ).send()
 
 
 @cl.on_message
 async def on_message(message: cl.Message):
     state = cl.user_session.get("state")
-    text = (message.content or "").strip()
 
     if state == "in_interview":
         await _handle_answer(message.content)
@@ -1035,17 +1027,7 @@ async def on_message(message: cl.Message):
     elif state == "await_skills":
         await _handle_skills_input(message.content)
     elif state == "select_role":
-        # User clicked a starter (text == role name) or typed something.
-        if text in ROLES:
-            await _select_role(text)
-        elif text.rstrip("…. ").lower() == "другая роль":
-            await _start_custom_role_input()
-        elif text:
-            # Treat free text as a custom role name directly.
-            cl.user_session.set("is_custom_role", True)
-            await _handle_custom_role_input(text)
-        else:
-            await _resend_selection_prompt(state)
+        await _resend_selection_prompt(state)
     else:
         await _resend_selection_prompt(state)
 
@@ -1313,6 +1295,25 @@ async def _start_interview():
         )
 
 
+@cl.action_callback("finish_interview")
+async def on_finish_interview(action: cl.Action):
+    await action.remove()
+    if cl.user_session.get("state") != "in_interview":
+        return
+
+    _stop_question_timer()
+    timer_msg = cl.user_session.get("question_timer_msg")
+    if timer_msg is not None:
+        try:
+            await timer_msg.remove()
+        except Exception:
+            log.debug("timer message remove failed", exc_info=True)
+    cl.user_session.set("question_timer_msg", None)
+    cl.user_session.set("question_started_at", None)
+
+    await _finish_interview()
+
+
 @cl.action_callback("restart")
 async def on_restart(action: cl.Action):
     await action.remove()
@@ -1355,7 +1356,8 @@ async def _ask_next_question():
             f"{emoji} **Вопрос {filled}/{max_q}** · {type_tag}\n\n"
             f"`{bar}`\n\n"
             f"{q['question']}"
-        )
+        ),
+        actions=make_finish_interview_action(),
     ).send()
 
     await _start_question_timer()
