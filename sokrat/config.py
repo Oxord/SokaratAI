@@ -19,6 +19,8 @@ class Settings:
     OPENROUTER_BASE_URL: str
     OPENROUTER_REFERER: str | None
     MODEL_NAME: str
+    MODEL_TECH: str
+    MODEL_GENERAL: str
     INTERVIEW_QUESTIONS_COUNT: int
 
 
@@ -36,13 +38,20 @@ def _safe_int(raw: str | None, default: int) -> int:
 
 
 def _load_settings() -> Settings:
+    legacy_model_name = os.getenv("MODEL_NAME")
     return Settings(
         OPENROUTER_API_KEY=os.getenv("OPENROUTER_API_KEY", ""),
         OPENROUTER_BASE_URL=os.getenv(
             "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
         ),
         OPENROUTER_REFERER=os.getenv("OPENROUTER_REFERER"),
-        MODEL_NAME=os.getenv("MODEL_NAME", "anthropic/claude-sonnet-4"),
+        MODEL_NAME=legacy_model_name or "anthropic/claude-sonnet-4",
+        MODEL_TECH=os.getenv("MODEL_TECH")
+        or legacy_model_name
+        or "anthropic/claude-sonnet-4-5",
+        MODEL_GENERAL=os.getenv("MODEL_GENERAL")
+        or legacy_model_name
+        or "deepseek/deepseek-chat",
         INTERVIEW_QUESTIONS_COUNT=_safe_int(
             os.getenv("INTERVIEW_QUESTIONS_COUNT"), _DEFAULT_QUESTIONS_COUNT
         ),

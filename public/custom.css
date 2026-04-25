@@ -1,0 +1,210 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Sokrat — friendly/modern/warm UI theme on top of Chainlit defaults.
+   Brand color matches the radar chart accent (#5B8DEF).
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+    --sokrat-primary: #5B8DEF;
+    --sokrat-primary-strong: #3D6FD3;
+    --sokrat-primary-soft: rgba(91, 141, 239, 0.12);
+    --sokrat-primary-softer: rgba(91, 141, 239, 0.06);
+    --sokrat-success: #22c55e;
+    --sokrat-warning: #f59e0b;
+    --sokrat-error: #ef4444;
+    --sokrat-radius: 14px;
+    --sokrat-radius-lg: 18px;
+    --sokrat-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.04);
+    --sokrat-shadow-hover: 0 4px 10px rgba(91, 141, 239, 0.18), 0 2px 4px rgba(15, 23, 42, 0.04);
+
+    --sokrat-surface: #ffffff;
+    --sokrat-surface-soft: #f7f9ff;
+    --sokrat-border: rgba(91, 141, 239, 0.18);
+}
+
+[data-theme="dark"], .dark {
+    --sokrat-primary-soft: rgba(91, 141, 239, 0.18);
+    --sokrat-primary-softer: rgba(91, 141, 239, 0.10);
+    --sokrat-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.2);
+    --sokrat-shadow-hover: 0 4px 10px rgba(91, 141, 239, 0.35), 0 2px 4px rgba(0, 0, 0, 0.3);
+    --sokrat-surface: #1a1d24;
+    --sokrat-surface-soft: #1f2530;
+    --sokrat-border: rgba(91, 141, 239, 0.28);
+}
+
+/* ─── Assistant message cards ────────────────────────────────────────────── */
+/* Chainlit emits its message blocks with class names containing "message".
+   We softly target only the assistant side via :not(.user) heuristics. */
+
+.message-content,
+[class*="MessageContent"],
+[class*="message-content"] {
+    border-radius: var(--sokrat-radius);
+    padding: 14px 18px;
+    line-height: 1.55;
+}
+
+[class*="message"]:not([class*="user"]):not([class*="User"]) [class*="message-content"],
+[class*="assistant"] [class*="message-content"] {
+    background: linear-gradient(180deg, var(--sokrat-surface) 0%, var(--sokrat-surface-soft) 100%);
+    box-shadow: var(--sokrat-shadow);
+    border: 1px solid var(--sokrat-border);
+}
+
+[data-theme="dark"] [class*="message"]:not([class*="user"]):not([class*="User"]) [class*="message-content"],
+.dark [class*="message"]:not([class*="user"]):not([class*="User"]) [class*="message-content"] {
+    background: linear-gradient(180deg, var(--sokrat-surface) 0%, var(--sokrat-surface-soft) 100%);
+}
+
+/* ─── Action buttons (cl.Action) — pill style ─────────────────────────────── */
+
+button[data-testid*="action"],
+[class*="action-button"] button,
+[class*="ActionButton"] {
+    border-radius: 999px !important;
+    padding: 8px 18px !important;
+    border: 1px solid var(--sokrat-primary) !important;
+    color: var(--sokrat-primary) !important;
+    background: transparent !important;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease !important;
+    font-weight: 500 !important;
+}
+
+button[data-testid*="action"]:hover,
+[class*="action-button"] button:hover,
+[class*="ActionButton"]:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--sokrat-shadow-hover) !important;
+    background: var(--sokrat-primary-soft) !important;
+}
+
+button[data-testid*="action"]:active,
+[class*="action-button"] button:active,
+[class*="ActionButton"]:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08) !important;
+}
+
+/* ─── Starter cards (welcome screen) ──────────────────────────────────────── */
+
+[class*="starter"],
+[class*="Starter"] {
+    border-radius: var(--sokrat-radius-lg) !important;
+    border: 1px solid var(--sokrat-border) !important;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease !important;
+}
+
+[class*="starter"]:hover,
+[class*="Starter"]:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--sokrat-shadow-hover) !important;
+    background: linear-gradient(135deg, var(--sokrat-primary-soft) 0%, transparent 80%) !important;
+}
+
+[class*="starter"] svg,
+[class*="Starter"] svg {
+    color: var(--sokrat-primary) !important;
+}
+
+/* ─── Steps (cl.Step) ─────────────────────────────────────────────────────── */
+
+[class*="step"]:not([class*="stepper"]) {
+    border-left: 2px solid var(--sokrat-primary-soft);
+    padding-left: 12px;
+    margin-left: 4px;
+}
+
+/* ─── Markdown polish inside messages ─────────────────────────────────────── */
+
+[class*="message-content"] blockquote {
+    border-left: 3px solid var(--sokrat-primary);
+    background: var(--sokrat-primary-softer);
+    padding: 12px 16px;
+    border-radius: 0 var(--sokrat-radius) var(--sokrat-radius) 0;
+    margin: 12px 0;
+}
+
+[class*="message-content"] blockquote p {
+    margin: 4px 0;
+}
+
+[class*="message-content"] code:not(pre code) {
+    background: var(--sokrat-primary-soft);
+    color: var(--sokrat-primary-strong);
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-size: 0.92em;
+    font-weight: 500;
+}
+
+[data-theme="dark"] [class*="message-content"] code:not(pre code),
+.dark [class*="message-content"] code:not(pre code) {
+    color: #a8c1f5;
+}
+
+[class*="message-content"] hr {
+    border: none;
+    border-top: 1px solid var(--sokrat-border);
+    margin: 14px 0;
+    opacity: 0.6;
+}
+
+[class*="message-content"] h1,
+[class*="message-content"] h2,
+[class*="message-content"] h3 {
+    color: var(--sokrat-primary-strong);
+    margin-top: 18px;
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
+[data-theme="dark"] [class*="message-content"] h1,
+[data-theme="dark"] [class*="message-content"] h2,
+[data-theme="dark"] [class*="message-content"] h3,
+.dark [class*="message-content"] h1,
+.dark [class*="message-content"] h2,
+.dark [class*="message-content"] h3 {
+    color: #a8c1f5;
+}
+
+/* ─── Focus ring ──────────────────────────────────────────────────────────── */
+
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+    outline: 2px solid var(--sokrat-primary) !important;
+    outline-offset: 2px !important;
+    border-radius: 6px;
+}
+
+/* ─── Scrollbar polish ────────────────────────────────────────────────────── */
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--sokrat-primary-soft) transparent;
+}
+
+*::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+    background: var(--sokrat-primary-soft);
+    border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: var(--sokrat-primary);
+}
+
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* ─── Composer (chat input) softening ─────────────────────────────────────── */
+
+[class*="ChatInput"],
+[class*="chat-input"],
+[class*="composer"] {
+    border-radius: var(--sokrat-radius) !important;
+}

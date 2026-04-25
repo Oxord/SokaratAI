@@ -4,19 +4,24 @@ import logging
 import os
 import random
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote_plus
 
 import chainlit as cl
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ValidationError
 
-from sokrat.llm import get_chat_model
+from sokrat.llm import get_chat_model_for
 from sokrat.prompts import load_prompt
 from sokrat.question_generator import generate_questions
+from sokrat.resource_generator import generate_resources
+from sokrat.role_classifier import classify_role
+from sokrat.stt import SaluteSpeechError, get_stt_client
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +30,9 @@ load_dotenv()
 SESSION_DIR = Path(os.getenv("SESSION_DIR", "data/sessions"))
 QUESTIONS_PATH = Path(os.getenv("QUESTIONS_PATH", "data/questions.json"))
 BANK_REFRESH_PER_SESSION = 2
+
+# Должно совпадать с [features.audio].sample_rate в .chainlit/config.toml.
+AUDIO_SAMPLE_RATE = 16000
 
 # Adaptive interview length: base bounds per level + extra capacity per required skill.
 # A run will ask at least `min_q` questions and at most `max_q`; in between, it stops
@@ -99,6 +107,10 @@ _BANK_LOCK = threading.Lock()
 
 ROLES = ["Python Developer", "Frontend Developer", "Product Manager"]
 LEVELS = ["Junior", "Middle", "Senior"]
+LEVEL_LABELS: dict[str, dict[str, str]] = {
+    "tech":    {"Junior": "Junior", "Middle": "Middle", "Senior": "Senior"},
+    "general": {"Junior": "До 1 года", "Middle": "1–3 года", "Senior": "3+ года"},
+}
 INTERVIEW_TYPES = {
     "technical": "Техническое (стек, фреймворки, инструменты)",
     "hr": "HR / Поведенческое (STAR, мотивация, конфликты)",
@@ -268,6 +280,7 @@ def get_personalized_questions(
     required_skills: list[str],
     is_custom_role: bool,
     count: int,
+    role_category: str = "tech",
 ) -> list[dict]:
     """Build a pool of `count` questions for a session.
 
@@ -305,6 +318,7 @@ def get_personalized_questions(
                 need,
                 existing_texts,
                 required_skills,
+                role_category=role_category,
             )
         except Exception:
             log.exception("personalized question generation failed")
@@ -335,6 +349,31 @@ class AnswerEvaluation(BaseModel):
     weaknesses: list[str] = Field(default_factory=list)
     category: str = "other"
     skills_touched: list[str] = Field(default_factory=list)
+    # Многомерная оценка (для радар-графика по итогам интервью).
+    # Заполняется только при intent="answer"; для skip/dont_know/clarification/meta — None.
+    role_fit: Optional[int] = Field(default=None, ge=0, le=10)
+    structure: Optional[int] = Field(default=None, ge=0, le=10)
+    literacy: Optional[int] = Field(default=None, ge=0, le=10)
+    oratory: Optional[int] = Field(default=None, ge=0, le=10)
+    depth: Optional[int] = Field(default=None, ge=0, le=10)
+    # Краткий эталонный ответ — заполняется, когда пользователь ответил слабо
+    # (или пропустил / сказал «не знаю»), чтобы показать «как было бы правильно».
+    ideal_answer: Optional[str] = None
+
+
+# Названия размерностей радар-графика — также используются в подписях UI.
+DIMENSION_LABELS: dict[str, str] = {
+    "role_fit": "Соответствие должности",
+    "structure": "Структура ответа",
+    "literacy": "Грамотность",
+    "oratory": "Ораторское мастерство",
+    "depth": "Глубина знаний",
+    "pace": "Темп",
+}
+
+# Жёсткий потолок на тиканье таймера, чтобы фоновая задача не жила вечно,
+# если пользователь ушёл со страницы или забыл про вкладку.
+TIMER_HARD_CAP_SEC = 30 * 60
 
 
 def _coerce_evaluation(value) -> AnswerEvaluation:
@@ -375,6 +414,8 @@ def analyze_answer_llm(
     answer: str,
     clarifications_used: int,
     required_skills: list[str] | None = None,
+    elapsed_seconds: float = 0.0,
+    role_category: str = "tech",
 ) -> AnswerEvaluation:
     template = load_prompt("analyzer")
     hints_text = ", ".join(hints) if hints else "(подсказок нет)"
@@ -389,9 +430,10 @@ def analyze_answer_llm(
         answer=answer,
         clarifications_used=clarifications_used,
         required_skills=skills_text,
+        elapsed_seconds=_format_elapsed(elapsed_seconds),
     )
 
-    model = get_chat_model(temperature=0.3)
+    model = get_chat_model_for(role_category, temperature=0.3)
     structured = model.with_structured_output(AnswerEvaluation, method="json_mode")
 
     try:
@@ -414,6 +456,22 @@ def analyze_answer_llm(
 # Replace this function body with a call to the LangGraph graph:
 #   result = await graph.ainvoke({"node": "summary", "answers": answers, "scores": scores, ...})
 #   return result["summary"]
+
+def _compute_dimension_averages(scores: list[dict]) -> dict[str, float]:
+    """Mean per dimension across answers that actually got a numeric rating.
+
+    Skipped / dont_know / clarification entries have None for these fields and
+    are excluded so they don't drag the radar to zero.
+    """
+    averages: dict[str, float] = {}
+    for key in DIMENSION_LABELS:
+        values = [s.get(key) for s in scores if isinstance(s.get(key), int)]
+        if values:
+            averages[key] = round(sum(values) / len(values), 1)
+        else:
+            averages[key] = 0.0
+    return averages
+
 
 def _compute_skills_coverage(
     required_skills: list[str], scores: list[dict]
@@ -439,6 +497,122 @@ def _compute_skills_coverage(
             }
         )
     return coverage
+
+
+_RESOURCE_TYPE_EMOJI = {
+    "book": "📘",
+    "docs": "📚",
+    "course": "🎓",
+    "article": "📝",
+    "video": "🎬",
+}
+_MAX_WEAK_TOPICS_INPUT = 7
+_QUESTION_SNIPPET_LEN = 80
+
+
+def _question_snippet(text: str, limit: int = _QUESTION_SNIPPET_LEN) -> str:
+    s = (text or "").strip()
+    if len(s) <= limit:
+        return s
+    cut = s[:limit].rsplit(" ", 1)[0]
+    return (cut or s[:limit]).rstrip(",.!?;:") + "…"
+
+
+def _extract_weak_topics(
+    scores: list[dict],
+    questions: list[dict],
+    skills_coverage: list[dict],
+) -> list[dict]:
+    """Build a unified list of weak topics for the resource generator.
+
+    Combines three signals: weak skills (avg<6), weak answers (score 1-6),
+    and skipped/dont_know answers (score==0). Deduped by topic name.
+    """
+    by_key: dict[str, dict] = {}
+
+    for entry in skills_coverage or []:
+        if entry.get("questions_count", 0) <= 0:
+            continue
+        avg = entry.get("avg_score") or 0.0
+        if not (0 < avg < 6):
+            continue
+        skill = str(entry.get("skill", "")).strip()
+        if not skill:
+            continue
+        by_key[skill.lower()] = {
+            "topic": skill,
+            "why": f"средний балл {avg}/10 по {entry['questions_count']} вопросам",
+            "category": "",
+            "skills": [skill],
+        }
+
+    for i, s in enumerate(scores or []):
+        if i >= len(questions):
+            break
+        score_val = s.get("score", 0)
+        intent = s.get("intent", "answer")
+        is_weak_answer = 0 < score_val <= 6
+        is_skipped = score_val == 0 and intent in ("skip", "dont_know")
+        if not (is_weak_answer or is_skipped):
+            continue
+
+        question_text = (questions[i] or {}).get("question", "")
+        topic = _question_snippet(question_text)
+        if not topic:
+            continue
+        key = topic.lower()
+        if key in by_key:
+            continue
+
+        if is_skipped:
+            why = (
+                "вопрос пропущен"
+                if intent == "skip"
+                else "пользователь ответил «не знаю»"
+            )
+        else:
+            weaknesses = [str(w).strip() for w in (s.get("weaknesses") or []) if str(w).strip()]
+            why = "; ".join(weaknesses) if weaknesses else f"слабый ответ ({score_val}/10)"
+
+        by_key[key] = {
+            "topic": topic,
+            "why": why,
+            "category": str(s.get("category", "") or "").strip(),
+            "skills": [str(t).strip() for t in (s.get("skills_touched") or []) if str(t).strip()],
+        }
+
+    return list(by_key.values())[:_MAX_WEAK_TOPICS_INPUT]
+
+
+def _format_resources_section(resources: list[dict]) -> str:
+    if not resources:
+        return ""
+
+    blocks: list[str] = ["### Что почитать и изучить", ""]
+    for entry in resources:
+        topic = str(entry.get("topic", "")).strip()
+        if not topic:
+            continue
+        why = str(entry.get("why_to_study", "")).strip()
+        header = f"**{topic}**" + (f" — {why}" if why else "")
+        blocks.append(header)
+
+        for r in entry.get("resources") or []:
+            title = str(r.get("title", "")).strip()
+            if not title:
+                continue
+            emoji = _RESOURCE_TYPE_EMOJI.get(r.get("type", ""), "📝")
+            url = r.get("url")
+            if not url:
+                query = str(r.get("search_query", "")).strip() or title
+                url = f"https://www.google.com/search?q={quote_plus(query)}"
+            source = str(r.get("source", "")).strip()
+            tail = f" — {source}" if source else ""
+            blocks.append(f"- {emoji} [{title}]({url}){tail}")
+
+        blocks.append("")
+
+    return "\n".join(blocks) + "\n"
 
 
 def mock_generate_summary(
@@ -477,6 +651,14 @@ def mock_generate_summary(
         if 0 < s["score"] <= 6 and i < len(questions)
     ]
 
+    elapsed_values = [
+        s["elapsed_seconds"]
+        for s in scores
+        if isinstance(s.get("elapsed_seconds"), (int, float))
+    ]
+    total_time = sum(elapsed_values)
+    avg_time = total_time / len(elapsed_values) if elapsed_values else 0.0
+
     return {
         "avg_score": round(avg, 1),
         "total_score": total,
@@ -490,7 +672,48 @@ def mock_generate_summary(
         "recommendation": RECOMMENDATION_TEMPLATES[verdict],
         "per_question": scores,
         "skills_coverage": _compute_skills_coverage(required_skills or [], scores),
+        "dimensions": _compute_dimension_averages(scores),
+        "total_time_seconds": round(total_time, 1),
+        "avg_time_seconds": round(avg_time, 1),
     }
+
+
+def _build_radar_figure(dimensions: dict[str, float]):
+    """Plotly radar chart over interview dimensions. Lazy-imports plotly so the
+    rest of the app keeps working even if the dependency is not installed yet.
+    """
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        return None
+
+    labels = [DIMENSION_LABELS[k] for k in DIMENSION_LABELS]
+    values = [dimensions.get(k, 0.0) for k in DIMENSION_LABELS]
+    # Замыкаем контур радара (первая точка == последняя).
+    labels_closed = labels + [labels[0]]
+    values_closed = values + [values[0]]
+
+    fig = go.Figure(
+        data=[
+            go.Scatterpolar(
+                r=values_closed,
+                theta=labels_closed,
+                fill="toself",
+                name="Твой результат",
+                line=dict(color="#5B8DEF", width=2),
+                fillcolor="rgba(91,141,239,0.25)",
+            )
+        ]
+    )
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, 10], tickvals=[2, 4, 6, 8, 10]),
+        ),
+        showlegend=False,
+        margin=dict(l=40, r=40, t=40, b=40),
+        title="Профиль интервью (0–10)",
+    )
+    return fig
 
 
 # ── Session persistence ───────────────────────────────────────────────────────
@@ -508,51 +731,92 @@ def save_session(session_id: str, data: dict) -> Path | None:
 
 # ── Button factories ──────────────────────────────────────────────────────────
 
+_ROLE_EMOJI: dict[str, str] = {
+    "Python Developer": "🐍",
+    "Frontend Developer": "💻",
+    "Product Manager": "🧭",
+}
+
+_TYPE_SHORT_LABELS: dict[str, str] = {
+    "technical": "🧩 Техническое",
+    "hr": "🤝 HR",
+    "mixed": "🎯 Смешанное",
+}
+
+
 def make_role_actions() -> list[cl.Action]:
     actions = [
-        cl.Action(name="select_role", label=role, payload={"value": role})
+        cl.Action(
+            name="select_role",
+            label=f"{_ROLE_EMOJI.get(role, '👤')} {role}",
+            payload={"value": role},
+        )
         for role in ROLES
     ]
     actions.append(
         cl.Action(
             name="select_role_custom",
-            label="Другая роль…",
+            label="✏️ Другая роль…",
             payload={"value": "custom"},
         )
     )
     return actions
 
 
-def make_level_actions() -> list[cl.Action]:
-    return [
-        cl.Action(name="select_level", label=level, payload={"value": level})
-        for level in LEVELS
-    ]
+def _level_display(level: str | None) -> str:
+    if not level:
+        return ""
+    category = cl.user_session.get("role_category") or "tech"
+    return LEVEL_LABELS.get(category, LEVEL_LABELS["tech"]).get(level, level)
 
 
-def make_type_actions() -> list[cl.Action]:
-    return [
-        cl.Action(name="select_type", label=label, payload={"value": key})
-        for key, label in INTERVIEW_TYPES.items()
-    ]
+def make_params_actions(category: str = "tech") -> list[cl.Action]:
+    """All level + type + mode + done buttons on a single 'Параметры' screen.
 
-
-def make_mode_actions() -> list[cl.Action]:
-    return [
-        cl.Action(
-            name="select_mode",
-            label=f"{label} — {hint}",
-            payload={"value": key},
+    Visually grouped via icons; the picked value is reflected in the message
+    text via `_update_params_message`.
+    """
+    labels = LEVEL_LABELS.get(category, LEVEL_LABELS["tech"])
+    actions: list[cl.Action] = []
+    for level in LEVELS:
+        actions.append(
+            cl.Action(
+                name="param_level",
+                label=f"📈 {labels.get(level, level)}",
+                payload={"value": level},
+            )
         )
-        for key, (label, hint) in INTERVIEW_MODES.items()
-    ]
+    for key in INTERVIEW_TYPES:
+        actions.append(
+            cl.Action(
+                name="param_type",
+                label=_TYPE_SHORT_LABELS.get(key, key),
+                payload={"value": key},
+            )
+        )
+    for key, (label, _hint) in INTERVIEW_MODES.items():
+        actions.append(
+            cl.Action(
+                name="param_mode",
+                label=f"🚀 {label}",
+                payload={"value": key},
+            )
+        )
+    actions.append(
+        cl.Action(
+            name="param_done",
+            label="✅ Готово →",
+            payload={"value": "done"},
+        )
+    )
+    return actions
 
 
 def make_restart_action() -> list[cl.Action]:
     return [
         cl.Action(
             name="restart",
-            label="Начать новое интервью",
+            label="🔄 Начать новое интервью",
             payload={"value": "restart"},
         )
     ]
@@ -562,7 +826,7 @@ def make_skills_skip_action() -> list[cl.Action]:
     return [
         cl.Action(
             name="skills_skip",
-            label="Пропустить (без фокуса на скиллах)",
+            label="⏭ Пропустить (без фокуса на скиллах)",
             payload={"value": "skip"},
         )
     ]
@@ -574,6 +838,7 @@ def _init_session():
     cl.user_session.set("state", "select_role")
     cl.user_session.set("session_id", str(uuid.uuid4()))
     cl.user_session.set("role", None)
+    cl.user_session.set("role_category", None)
     cl.user_session.set("level", None)
     cl.user_session.set("interview_type", None)
     cl.user_session.set("interview_mode", None)
@@ -588,6 +853,11 @@ def _init_session():
     cl.user_session.set("is_custom_role", False)
     cl.user_session.set("min_q", 0)
     cl.user_session.set("max_q", 0)
+    cl.user_session.set("audio_chunks", [])
+    cl.user_session.set("question_started_at", None)
+    cl.user_session.set("question_timer_msg", None)
+    cl.user_session.set("question_timer_task", None)
+    cl.user_session.set("params_msg", None)
 
 
 _MAX_SKILLS = 10
@@ -614,6 +884,7 @@ def _parse_skills(raw: str) -> list[str]:
 
 
 TYPE_LABEL = {"technical": "Техническое", "hr": "HR / Поведенческое", "mixed": "Смешанное"}
+TYPE_EMOJI = {"technical": "🛠️", "hr": "🤝", "mixed": "🎯"}
 
 
 def verdict_for_score(score: int) -> tuple[str, str, str]:
@@ -627,30 +898,130 @@ def verdict_for_score(score: int) -> tuple[str, str, str]:
     return "needs_work", "⚠️", "Можно лучше"
 
 
+def _format_elapsed(seconds: float) -> str:
+    """Человеко-читаемое время: '42 сек' / '2 мин 15 сек'."""
+    total = max(0, int(round(seconds)))
+    if total < 60:
+        return f"{total} сек"
+    minutes, sec = divmod(total, 60)
+    if sec == 0:
+        return f"{minutes} мин"
+    return f"{minutes} мин {sec} сек"
+
+
+def _format_clock(seconds: float) -> str:
+    """Формат для живого счётчика: M:SS."""
+    total = max(0, int(seconds))
+    minutes, sec = divmod(total, 60)
+    return f"{minutes}:{sec:02d}"
+
+
+def _pace_score(seconds: float) -> int:
+    """Детерминированная оценка темпа ответа по бакетам (0–10)."""
+    if seconds < 15:
+        return 5
+    if seconds < 60:
+        return 9
+    if seconds < 120:
+        return 10
+    if seconds < 240:
+        return 8
+    if seconds < 420:
+        return 6
+    if seconds < 600:
+        return 4
+    return 2
+
+
+async def _tick_timer(msg: cl.Message, started_at: float) -> None:
+    """Раз в секунду обновляет сообщение-таймер. Завершается по cancel
+    или по достижению TIMER_HARD_CAP_SEC."""
+    try:
+        while True:
+            elapsed = time.monotonic() - started_at
+            if elapsed >= TIMER_HARD_CAP_SEC:
+                msg.content = f"⏱ {_format_clock(TIMER_HARD_CAP_SEC)} (таймер остановлен)"
+                await msg.update()
+                return
+            msg.content = f"⏱ {_format_clock(elapsed)}"
+            await msg.update()
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        log.exception("timer tick failed")
+
+
+async def _start_question_timer() -> None:
+    """Создаёт сообщение-таймер и фоновую задачу под текущий вопрос."""
+    started_at = time.monotonic()
+    timer_msg = await cl.Message(content="⏱ 0:00").send()
+    task = asyncio.create_task(_tick_timer(timer_msg, started_at))
+    cl.user_session.set("question_started_at", started_at)
+    cl.user_session.set("question_timer_msg", timer_msg)
+    cl.user_session.set("question_timer_task", task)
+
+
+def _resume_question_timer() -> None:
+    """Перезапускает тиканье на существующем сообщении-таймере без сброса started_at.
+    Используется после уточнения / dont_know, когда пользователь продолжает работать
+    над тем же вопросом."""
+    timer_msg = cl.user_session.get("question_timer_msg")
+    started_at = cl.user_session.get("question_started_at")
+    if timer_msg is None or started_at is None:
+        return
+    task = asyncio.create_task(_tick_timer(timer_msg, started_at))
+    cl.user_session.set("question_timer_task", task)
+
+
+def _stop_question_timer() -> float:
+    """Отменяет тикающую задачу и возвращает накопленное время.
+    Само сообщение-таймер не трогает (его финализирует caller)."""
+    task = cl.user_session.get("question_timer_task")
+    if task is not None and not task.done():
+        task.cancel()
+    cl.user_session.set("question_timer_task", None)
+    started_at = cl.user_session.get("question_started_at")
+    if started_at is None:
+        return 0.0
+    return time.monotonic() - started_at
+
+
 # ── Chainlit handlers ─────────────────────────────────────────────────────────
+
+@cl.set_starters
+async def starters():
+    # Иконки на Starter ожидают URL, а не lucide-имена — оставляем без иконок,
+    # эмодзи в лейбле визуально различает варианты.
+    return [
+        cl.Starter(
+            label="🐍 Python Developer",
+            message="Python Developer",
+        ),
+        cl.Starter(
+            label="💻 Frontend Developer",
+            message="Frontend Developer",
+        ),
+        cl.Starter(
+            label="🧭 Product Manager",
+            message="Product Manager",
+        ),
+        cl.Starter(
+            label="✏️ Другая роль…",
+            message="Другая роль…",
+        ),
+    ]
+
 
 @cl.on_chat_start
 async def on_chat_start():
     _init_session()
 
-    await cl.Message(
-        content=(
-            "## Привет! Я **Сократ** 👋\n\n"
-            "Твой AI-тренер для подготовки к собеседованиям.\n\n"
-            "Я проведу адаптивное mock-интервью: число вопросов подберётся "
-            "под твой уровень и набор навыков, чтобы реально оценить "
-            "компетенции, а не просто «отбить квоту». После каждого ответа — "
-            "мгновенный фидбэк, в конце — итоговый отчёт с рекомендациями.\n\n"
-            "---\n\n"
-            "**С чего начнём?** Выбери целевую роль:"
-        ),
-        actions=make_role_actions(),
-    ).send()
-
 
 @cl.on_message
 async def on_message(message: cl.Message):
     state = cl.user_session.get("state")
+    text = (message.content or "").strip()
 
     if state == "in_interview":
         await _handle_answer(message.content)
@@ -663,32 +1034,95 @@ async def on_message(message: cl.Message):
         await _handle_custom_role_input(message.content)
     elif state == "await_skills":
         await _handle_skills_input(message.content)
+    elif state == "select_role":
+        # User clicked a starter (text == role name) or typed something.
+        if text in ROLES:
+            await _select_role(text)
+        elif text.rstrip("…. ").lower() == "другая роль":
+            await _start_custom_role_input()
+        elif text:
+            # Treat free text as a custom role name directly.
+            cl.user_session.set("is_custom_role", True)
+            await _handle_custom_role_input(text)
+        else:
+            await _resend_selection_prompt(state)
     else:
-        # State is select_role / select_level / select_type — resend the relevant buttons
         await _resend_selection_prompt(state)
 
 
 async def _resend_selection_prompt(state: str):
     if state == "select_role":
         await cl.Message(
-            content="Пожалуйста, **выбери роль** с помощью кнопок:",
+            content="Пожалуйста, **выбери роль** с помощью кнопок ниже:",
             actions=make_role_actions(),
         ).send()
-    elif state == "select_level":
-        await cl.Message(
-            content="Пожалуйста, **выбери уровень** с помощью кнопок:",
-            actions=make_level_actions(),
-        ).send()
-    elif state == "select_type":
-        await cl.Message(
-            content="Пожалуйста, **выбери тип интервью** с помощью кнопок:",
-            actions=make_type_actions(),
-        ).send()
-    elif state == "select_mode":
-        await cl.Message(
-            content="Пожалуйста, **выбери режим интервью** с помощью кнопок:",
-            actions=make_mode_actions(),
-        ).send()
+    elif state == "select_params":
+        await _render_params_screen()
+
+
+async def _select_role(role: str):
+    cl.user_session.set("role", role)
+    cl.user_session.set("role_category", "tech")
+    cl.user_session.set("is_custom_role", False)
+    await _render_params_screen()
+
+
+async def _start_custom_role_input():
+    cl.user_session.set("state", "await_custom_role")
+    await cl.Message(
+        content=(
+            "Окей, введи название должности текстом — например: "
+            "`Middle DevOps Engineer`, `Senior Data Engineer`, `Junior QA Automation`."
+        )
+    ).send()
+
+
+def _params_content(role: str | None) -> str:
+    category = cl.user_session.get("role_category") or "tech"
+    levels_lbl = LEVEL_LABELS.get(category, LEVEL_LABELS["tech"])
+    level = cl.user_session.get("level")
+    interview_type = cl.user_session.get("interview_type")
+    interview_mode = cl.user_session.get("interview_mode")
+
+    level_view = f"✓ **{levels_lbl.get(level, level)}**" if level else "—"
+    type_view = f"✓ **{INTERVIEW_TYPES.get(interview_type, interview_type)}**" if interview_type else "—"
+    if interview_mode:
+        mlabel, mhint = INTERVIEW_MODES[interview_mode]
+        mode_view = f"✓ **{mlabel}** _({mhint})_"
+    else:
+        mode_view = "—"
+
+    return (
+        f"### ⚙️ Настрой интервью\n\n"
+        f"Роль: **{role}** ✓\n\n"
+        f"Кликай по кнопкам ниже — выбери уровень, тип и режим. Когда всё готово, жми **Готово →**.\n\n"
+        f"- 📈 **Уровень**: {level_view}\n"
+        f"- 🧩 **Тип**: {type_view}\n"
+        f"- 🚀 **Режим**: {mode_view}\n"
+    )
+
+
+async def _render_params_screen():
+    cl.user_session.set("state", "select_params")
+    role = cl.user_session.get("role")
+    category = cl.user_session.get("role_category") or "tech"
+    msg = cl.Message(
+        content=_params_content(role),
+        actions=make_params_actions(category),
+    )
+    await msg.send()
+    cl.user_session.set("params_msg", msg)
+
+
+async def _update_params_message():
+    msg = cl.user_session.get("params_msg")
+    if msg is None:
+        return
+    msg.content = _params_content(cl.user_session.get("role"))
+    try:
+        await msg.update()
+    except Exception:
+        log.debug("params msg update failed", exc_info=True)
 
 
 async def _handle_custom_role_input(text: str):
@@ -701,11 +1135,13 @@ async def _handle_custom_role_input(text: str):
     role = role[:_MAX_ROLE_LEN]
     cl.user_session.set("role", role)
     cl.user_session.set("is_custom_role", True)
-    cl.user_session.set("state", "select_level")
-    await cl.Message(
-        content=f"Роль: **{role}** ✓\n\nТеперь выбери уровень опыта:",
-        actions=make_level_actions(),
-    ).send()
+
+    async with cl.Step(name="Определяю тип роли…", type="tool") as step:
+        category = await asyncio.to_thread(classify_role, role)
+        step.output = f"категория: {category}"
+    cl.user_session.set("role_category", category)
+
+    await _render_params_screen()
 
 
 async def _handle_skills_input(text: str):
@@ -723,64 +1159,58 @@ async def _handle_skills_input(text: str):
 @cl.action_callback("select_role")
 async def on_select_role(action: cl.Action):
     value = action.payload["value"]
-    cl.user_session.set("role", value)
-    cl.user_session.set("state", "select_level")
     await action.remove()
-    await cl.Message(
-        content=f"Роль: **{value}** ✓\n\nТеперь выбери уровень опыта:",
-        actions=make_level_actions(),
-    ).send()
-
-
-@cl.action_callback("select_level")
-async def on_select_level(action: cl.Action):
-    value = action.payload["value"]
-    cl.user_session.set("level", value)
-    cl.user_session.set("state", "select_type")
-    await action.remove()
-    await cl.Message(
-        content=f"Уровень: **{value}** ✓\n\nВыбери тип интервью:",
-        actions=make_type_actions(),
-    ).send()
+    await _select_role(value)
 
 
 @cl.action_callback("select_role_custom")
 async def on_select_role_custom(action: cl.Action):
-    cl.user_session.set("state", "await_custom_role")
     await action.remove()
-    await cl.Message(
-        content=(
-            "Окей, введи название должности текстом — например: "
-            "`Middle DevOps Engineer`, `Senior Data Engineer`, `Junior QA Automation`."
-        )
-    ).send()
+    await _start_custom_role_input()
 
 
-@cl.action_callback("select_type")
-async def on_select_type(action: cl.Action):
-    interview_type = action.payload["value"]
-    cl.user_session.set("interview_type", interview_type)
-    cl.user_session.set("state", "select_mode")
-    await action.remove()
-    await cl.Message(
-        content=(
-            f"Тип: **{INTERVIEW_TYPES[interview_type]}** ✓\n\n"
-            "Выбери **режим интервью** — насколько подробно проходим:"
-        ),
-        actions=make_mode_actions(),
-    ).send()
+@cl.action_callback("param_level")
+async def on_param_level(action: cl.Action):
+    cl.user_session.set("level", action.payload["value"])
+    await _update_params_message()
 
 
-@cl.action_callback("select_mode")
-async def on_select_mode(action: cl.Action):
-    mode = action.payload["value"]
-    cl.user_session.set("interview_mode", mode)
+@cl.action_callback("param_type")
+async def on_param_type(action: cl.Action):
+    cl.user_session.set("interview_type", action.payload["value"])
+    await _update_params_message()
+
+
+@cl.action_callback("param_mode")
+async def on_param_mode(action: cl.Action):
+    cl.user_session.set("interview_mode", action.payload["value"])
+    await _update_params_message()
+
+
+@cl.action_callback("param_done")
+async def on_param_done(action: cl.Action):
+    level = cl.user_session.get("level")
+    interview_type = cl.user_session.get("interview_type")
+    interview_mode = cl.user_session.get("interview_mode")
+    if not (level and interview_type and interview_mode):
+        await cl.Message(
+            content="Сначала выбери все три параметра: **уровень**, **тип** и **режим** — потом жми **Готово**.",
+        ).send()
+        return
+
+    msg = cl.user_session.get("params_msg")
+    if msg is not None:
+        try:
+            msg.actions = []
+            await msg.update()
+        except Exception:
+            log.debug("params msg cleanup failed", exc_info=True)
+    cl.user_session.set("params_msg", None)
     cl.user_session.set("state", "await_skills")
-    await action.remove()
-    label, _ = INTERVIEW_MODES[mode]
+
     await cl.Message(
         content=(
-            f"Режим: **{label}** ✓\n\n"
+            "Параметры готовы! 🎉\n\n"
             "На каких **навыках/инструментах** сделать акцент? "
             "Перечисли через запятую (например: `Docker, Kubernetes, Terraform, AWS`).\n\n"
             "Или нажми кнопку ниже, чтобы пройти стандартное интервью без фокуса."
@@ -800,6 +1230,7 @@ async def _start_interview():
     role = cl.user_session.get("role")
     level = cl.user_session.get("level")
     interview_type = cl.user_session.get("interview_type")
+    role_category: str = cl.user_session.get("role_category") or "tech"
     required_skills: list[str] = cl.user_session.get("required_skills") or []
     is_custom_role: bool = bool(cl.user_session.get("is_custom_role"))
     db = cl.user_session.get("questions_db")
@@ -821,11 +1252,13 @@ async def _start_interview():
                 required_skills,
                 is_custom_role,
                 max_q,
+                role_category,
             )
             step.output = f"подготовлено {len(questions)} вопросов"
     else:
         questions = get_personalized_questions(
-            db, role, level, interview_type, required_skills, is_custom_role, max_q
+            db, role, level, interview_type, required_skills, is_custom_role, max_q,
+            role_category,
         )
 
     cl.user_session.set("questions", questions)
@@ -855,7 +1288,7 @@ async def _start_interview():
         content=(
             f"**Параметры интервью**\n\n"
             f"- Роль: **{role}**\n"
-            f"- Уровень: **{level}**\n"
+            f"- Уровень: **{_level_display(level)}**\n"
             f"- Тип: **{INTERVIEW_TYPES[interview_type]}**\n"
             f"{skills_line}\n"
             f"{length_explanation} После каждого ответа — мгновенный фидбэк.\n\n"
@@ -911,14 +1344,21 @@ async def _ask_next_question():
     q = questions[question_num]
     interview_type = cl.user_session.get("interview_type", "")
     type_tag = TYPE_LABEL.get(interview_type, interview_type)
+    emoji = TYPE_EMOJI.get(interview_type, "🎯")
+
+    filled = question_num + 1
+    bar_total = max(filled, max_q)
+    bar = "▓" * filled + "░" * max(0, bar_total - filled)
 
     await cl.Message(
         content=(
-            f"**Вопрос {question_num + 1}** "
-            f"_(минимум {min_q}, максимум {max_q} · {type_tag})_\n\n"
+            f"{emoji} **Вопрос {filled}/{max_q}** · {type_tag}\n\n"
+            f"`{bar}`\n\n"
             f"{q['question']}"
         )
     ).send()
+
+    await _start_question_timer()
 
 
 async def _handle_answer(answer_text: str):
@@ -928,10 +1368,13 @@ async def _handle_answer(answer_text: str):
     if question_num >= len(questions):
         return
 
+    elapsed_seconds = _stop_question_timer()
+
     question = questions[question_num]
     role = cl.user_session.get("role")
     level = cl.user_session.get("level")
     interview_type = cl.user_session.get("interview_type")
+    role_category: str = cl.user_session.get("role_category") or "tech"
     clarifications_used = cl.user_session.get("clarifications_used") or 0
     required_skills: list[str] = cl.user_session.get("required_skills") or []
 
@@ -946,6 +1389,8 @@ async def _handle_answer(answer_text: str):
                 answer=answer_text,
                 clarifications_used=clarifications_used,
                 required_skills=required_skills,
+                elapsed_seconds=elapsed_seconds,
+                role_category=role_category,
             )
             analysis.skills_touched = _filter_skills_touched(
                 analysis.skills_touched, required_skills
@@ -977,6 +1422,7 @@ async def _handle_answer(answer_text: str):
 
     if analysis.intent == "meta":
         await cl.Message(content=analysis.feedback).send()
+        _resume_question_timer()
         return
 
     if analysis.intent == "skip":
@@ -996,11 +1442,13 @@ async def _handle_clarification(analysis: AnswerEvaluation, clarifications_used:
     if analysis.explanation:
         parts.append(analysis.explanation)
     await cl.Message(content="\n\n".join(parts) or "Давай разберём вопрос.").send()
+    _resume_question_timer()
 
 
 async def _handle_dont_know(analysis: AnswerEvaluation):
     cl.user_session.set("pending_dont_know", True)
     await cl.Message(content=analysis.feedback).send()
+    _resume_question_timer()
 
 
 async def _record_and_advance(
@@ -1015,6 +1463,21 @@ async def _record_and_advance(
 
     _, emoji, label = verdict_for_score(score_override)
 
+    # Финализируем таймер: время уже накоплено в started_at; задача отменена
+    # ещё на входе в _handle_answer. Удалим сообщение-счётчик из чата.
+    started_at = cl.user_session.get("question_started_at")
+    elapsed = (time.monotonic() - started_at) if started_at is not None else 0.0
+    pace = _pace_score(elapsed) if score_override > 0 else None
+
+    timer_msg = cl.user_session.get("question_timer_msg")
+    if timer_msg is not None:
+        try:
+            await timer_msg.remove()
+        except Exception:
+            log.debug("timer message remove failed", exc_info=True)
+    cl.user_session.set("question_timer_msg", None)
+    cl.user_session.set("question_started_at", None)
+
     answers.append(answer_text)
     scores.append(
         {
@@ -1027,6 +1490,14 @@ async def _record_and_advance(
             "intent": analysis.intent,
             "skills_touched": list(analysis.skills_touched or []),
             "question_id": question.get("id", ""),
+            "role_fit": analysis.role_fit,
+            "structure": analysis.structure,
+            "literacy": analysis.literacy,
+            "oratory": analysis.oratory,
+            "depth": analysis.depth,
+            "pace": pace,
+            "elapsed_seconds": round(elapsed, 1),
+            "ideal_answer": analysis.ideal_answer,
         }
     )
 
@@ -1036,11 +1507,29 @@ async def _record_and_advance(
     cl.user_session.set("clarifications_used", 0)
     cl.user_session.set("pending_dont_know", False)
 
+    time_line = f"⏱ {_format_elapsed(elapsed)}"
+    if pace is not None:
+        time_line += f" · темп {pace}/10"
+
     if score_override == 0:
-        message = f"{emoji} **{label}**\n\n{analysis.feedback}"
+        header = f"{emoji} **{label}**"
     else:
-        message = f"{emoji} **{label}** — {score_override}/10\n\n{analysis.feedback}"
+        header = f"{emoji} **{label}** · {score_override}/10"
+
+    message = f"{header}\n\n---\n\n{analysis.feedback}\n\n{time_line}"
     await cl.Message(content=message).send()
+
+    # Если ответ слабый/пропущен/«не знаю» — показываем эталонный ответ как карточку (blockquote).
+    if analysis.ideal_answer and (score_override < 6):
+        ideal_lines = analysis.ideal_answer.split("\n")
+        quoted = "\n".join(f"> {line}" if line else ">" for line in ideal_lines)
+        await cl.Message(
+            content=(
+                "> 💡 **Как ответил бы сильный кандидат**\n"
+                ">\n"
+                f"{quoted}"
+            )
+        ).send()
 
     await _ask_next_question()
 
@@ -1051,6 +1540,7 @@ async def _finish_interview():
     role = cl.user_session.get("role")
     level = cl.user_session.get("level")
     interview_type = cl.user_session.get("interview_type")
+    role_category: str = cl.user_session.get("role_category") or "tech"
     questions = cl.user_session.get("questions")
     answers = cl.user_session.get("answers")
     scores = cl.user_session.get("scores")
@@ -1067,6 +1557,19 @@ async def _finish_interview():
             f"Итог: {summary['total_score']}/{summary['max_possible']} "
             f"({summary['percentage']}%) — {summary['verdict']}"
         )
+
+    weak_topics = _extract_weak_topics(scores, questions, summary.get("skills_coverage") or [])
+    resources: list[dict] = []
+    if weak_topics:
+        try:
+            async with cl.Step(name="Подбираю материалы по слабым темам…", type="tool") as step:
+                resources = await asyncio.to_thread(
+                    generate_resources, role, level, weak_topics, role_category
+                )
+                step.output = f"подобрано тем: {len(resources)}"
+        except Exception:
+            log.exception("resource generation failed (best-effort, ignored)")
+            resources = []
 
     # Format report
     type_label = INTERVIEW_TYPES.get(interview_type, interview_type)
@@ -1085,26 +1588,49 @@ async def _finish_interview():
     per_q_lines = []
     for i, (q, s) in enumerate(zip(questions, scores), 1):
         _, e, _ = verdict_for_score(s["score"])
+        elapsed = s.get("elapsed_seconds")
+        time_part = (
+            f" _({_format_clock(elapsed)})_"
+            if isinstance(elapsed, (int, float))
+            else ""
+        )
+        snippet = q["question"][:60].rstrip()
         if s["score"] == 0:
-            per_q_lines.append(f"{i}. {e} пропущено — {q['question'][:60]}...")
+            per_q_lines.append(
+                f"{i}. {e} **пропущено**{time_part} — {snippet}…"
+            )
         else:
-            per_q_lines.append(f"{i}. {e} {s['score']}/10 — {q['question'][:60]}...")
+            per_q_lines.append(
+                f"{i}. {e} **{s['score']}/10**{time_part} — {snippet}…"
+            )
 
     per_q_text = "\n".join(per_q_lines)
 
-    if summary["counted_count"] == 0:
-        result_line = "Все вопросы пропущены — попробуй ещё раз и отвечай хоть как-нибудь."
-    else:
-        result_line = (
-            f"### Общий результат: {summary['total_score']}/{summary['max_possible']} "
-            f"({summary['percentage']}%) — **{summary['verdict']}**"
-        )
-        if summary["skipped_count"] > 0:
-            result_line += f"\n\n_Учтено {summary['counted_count']} ответов из {len(scores)} (пропущено: {summary['skipped_count']})_"
-
-    skills_header = (
-        f" | **Навыки:** {', '.join(required_skills)}" if required_skills else ""
+    skills_header_text = (
+        f" · **Навыки:** {', '.join(required_skills)}" if required_skills else ""
     )
+
+    dimensions = summary.get("dimensions") or {}
+    has_dimension_data = any(v > 0 for v in dimensions.values())
+    dimensions_section = ""
+    if has_dimension_data:
+        dimension_lines = [
+            f"- **{DIMENSION_LABELS[k]}** — {dimensions.get(k, 0.0)}/10"
+            for k in DIMENSION_LABELS
+        ]
+        dimensions_section = (
+            "### 📊 Профиль интервью\n" + "\n".join(dimension_lines) + "\n\n"
+        )
+
+    pace_section = ""
+    total_time = summary.get("total_time_seconds") or 0.0
+    avg_time = summary.get("avg_time_seconds") or 0.0
+    if total_time > 0:
+        pace_section = (
+            "### ⏱ Темп ответов\n"
+            f"- Общее время: **{_format_elapsed(total_time)}**\n"
+            f"- Среднее на ответ: **{_format_elapsed(avg_time)}**\n\n"
+        )
 
     skills_section = ""
     if summary.get("skills_coverage"):
@@ -1120,23 +1646,58 @@ async def _finish_interview():
                     f"- **{entry['skill']}** — {e} {entry['avg_score']}/10 "
                     f"(вопросов: {entry['questions_count']})"
                 )
-        skills_section = "### Покрытие навыков\n" + "\n".join(coverage_lines) + "\n\n"
+        skills_section = "### 🎯 Покрытие навыков\n" + "\n".join(coverage_lines) + "\n\n"
 
+    resources_section = _format_resources_section(resources)
+
+    # ── Hero block: верховный вердикт. ────────────────────────────────────────
+    hero_emoji = {"Strong": "🎉", "Competent": "💪", "Needs Work": "🔧"}.get(
+        summary["verdict"], "✨"
+    )
+    if summary["counted_count"] == 0:
+        hero_block = (
+            "## 🔧 Все вопросы пропущены\n\n"
+            "Попробуй пройти ещё раз — отвечай хоть как-нибудь, даже короткие ответы помогут оценить уровень."
+        )
+    else:
+        skipped_note = (
+            f" _(учтено {summary['counted_count']} из {len(scores)}, "
+            f"пропущено: {summary['skipped_count']})_"
+            if summary["skipped_count"] > 0
+            else ""
+        )
+        hero_block = (
+            f"## {hero_emoji} {summary['verdict']} — {summary['percentage']}%\n\n"
+            f"**Роль:** {role} · **Уровень:** {_level_display(level)} · **Тип:** {type_label}{skills_header_text}\n\n"
+            f"_{summary['total_score']}/{summary['max_possible']} баллов_{skipped_note}"
+        )
+    await cl.Message(content=hero_block).send()
+
+    # ── Радар: отдельным сообщением, чтобы график был визуально выше текста. ──
+    if has_dimension_data:
+        radar_fig = _build_radar_figure(dimensions)
+        if radar_fig is not None:
+            await cl.Message(
+                content="### 📊 Профиль интервью",
+                elements=[
+                    cl.Plotly(name="profile_radar", figure=radar_fig, display="inline")
+                ],
+            ).send()
+
+    # ── Текстовый отчёт: всё, кроме hero и графика. ───────────────────────────
     report = (
-        f"## Итоговый отчёт по интервью\n\n"
-        f"**Роль:** {role} | **Уровень:** {level} | **Тип:** {type_label}{skills_header}\n\n"
-        f"---\n\n"
-        f"{result_line}\n\n"
-        f"### Сильные стороны\n{strengths_text}\n\n"
-        f"### Над чем поработать\n{improvements_text}\n\n"
+        f"{dimensions_section}"
+        f"{pace_section}"
+        f"### ✅ Сильные стороны\n{strengths_text}\n\n"
+        f"### 🛠 Над чем поработать\n{improvements_text}\n\n"
         f"{skills_section}"
-        f"### По вопросам\n{per_q_text}\n\n"
+        f"{resources_section}"
+        f"### 📋 По вопросам\n{per_q_text}\n\n"
         f"---\n\n"
-        f"### Рекомендация\n{summary['recommendation']}\n\n"
+        f"### 💡 Рекомендация\n{summary['recommendation']}\n\n"
         f"---\n\n"
         f"_Session ID: `{session_id}`_"
     )
-
     await cl.Message(content=report).send()
 
     # Build and save session JSON
@@ -1154,6 +1715,14 @@ async def _finish_interview():
             "weaknesses": scores[i].get("weaknesses", []),
             "category": scores[i].get("category", "other"),
             "skills_touched": scores[i].get("skills_touched", []),
+            "role_fit": scores[i].get("role_fit"),
+            "structure": scores[i].get("structure"),
+            "literacy": scores[i].get("literacy"),
+            "oratory": scores[i].get("oratory"),
+            "depth": scores[i].get("depth"),
+            "pace": scores[i].get("pace"),
+            "elapsed_seconds": scores[i].get("elapsed_seconds"),
+            "ideal_answer": scores[i].get("ideal_answer"),
         }
         for i, q in enumerate(questions)
         if i < len(scores)
@@ -1163,7 +1732,9 @@ async def _finish_interview():
         "session_id": session_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "role": role,
+        "role_category": role_category,
         "level": level,
+        "level_display": _level_display(level),
         "interview_type": interview_type,
         "interview_mode": cl.user_session.get("interview_mode"),
         "is_custom_role": bool(cl.user_session.get("is_custom_role")),
@@ -1178,6 +1749,10 @@ async def _finish_interview():
             "improvements": summary["improvements"],
             "recommendation": summary["recommendation"],
             "skills_coverage": summary.get("skills_coverage", []),
+            "dimensions": summary.get("dimensions", {}),
+            "total_time_seconds": summary.get("total_time_seconds", 0.0),
+            "avg_time_seconds": summary.get("avg_time_seconds", 0.0),
+            "resources": resources,
         },
         "qa_pairs": qa_pairs,
     }
@@ -1193,3 +1768,87 @@ async def _finish_interview():
             content="⚠️ Не удалось сохранить сессию, но отчёт выше — твой результат.",
             actions=make_restart_action(),
         ).send()
+
+
+# ── Voice input (SaluteSpeech) ────────────────────────────────────────────────
+
+@cl.on_audio_start
+async def on_audio_start() -> bool:
+    """Разрешаем запись только если STT настроен."""
+    if get_stt_client() is None:
+        await cl.Message(
+            content=(
+                "🎤 Голосовой ввод не настроен. "
+                "Добавь `SBER_SALUTE_AUTH_KEY` в `.env` и перезапусти приложение."
+            )
+        ).send()
+        return False
+    cl.user_session.set("audio_chunks", [])
+    return True
+
+
+@cl.on_audio_chunk
+async def on_audio_chunk(chunk: cl.InputAudioChunk) -> None:
+    chunks: list[bytes] = cl.user_session.get("audio_chunks") or []
+    if getattr(chunk, "isStart", False):
+        chunks = []
+    chunks.append(chunk.data)
+    cl.user_session.set("audio_chunks", chunks)
+
+
+@cl.on_audio_end
+async def on_audio_end(*_args, **_kwargs) -> None:
+    chunks: list[bytes] = cl.user_session.get("audio_chunks") or []
+    cl.user_session.set("audio_chunks", [])
+    if not chunks:
+        await cl.Message(content="Пустая запись — попробуй ещё раз.").send()
+        return
+
+    audio_bytes = b"".join(chunks)
+
+    client = get_stt_client()
+    if client is None:
+        await cl.Message(
+            content=(
+                "🎤 Голосовой ввод не настроен. "
+                "Добавь `SBER_SALUTE_AUTH_KEY` в `.env` и перезапусти приложение."
+            )
+        ).send()
+        return
+
+    try:
+        async with cl.Step(name="Распознаю речь (SaluteSpeech)…", type="tool") as step:
+            text = await asyncio.to_thread(
+                client.recognize_pcm16, audio_bytes, AUDIO_SAMPLE_RATE
+            )
+            step.output = (
+                f"распознано символов: {len(text)}" if text else "пусто"
+            )
+    except SaluteSpeechError as exc:
+        log.exception("SaluteSpeech transcription failed")
+        await cl.Message(content=f"❌ Ошибка распознавания: {exc}").send()
+        return
+    except Exception:
+        log.exception("STT failed")
+        await cl.Message(
+            content="❌ Не удалось распознать речь. Попробуй ещё раз."
+        ).send()
+        return
+
+    if not text:
+        await cl.Message(
+            content="Не удалось разобрать запись — попробуй сказать чуть громче или ближе к микрофону."
+        ).send()
+        return
+
+    await cl.Message(content=f"🎤 _Распознано:_ {text}").send()
+
+    state = cl.user_session.get("state")
+    if state == "in_interview":
+        await _handle_answer(text)
+    elif state == "await_custom_role":
+        await _handle_custom_role_input(text)
+    elif state == "await_skills":
+        await _handle_skills_input(text)
+    else:
+        await _resend_selection_prompt(state)

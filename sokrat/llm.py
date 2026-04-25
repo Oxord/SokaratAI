@@ -8,14 +8,19 @@ from langchain_openai import ChatOpenAI
 from .config import settings
 
 
-@lru_cache(maxsize=4)
-def get_chat_model(temperature: float = 0.7) -> ChatOpenAI:
+@lru_cache(maxsize=8)
+def get_chat_model_for(category: str = "tech", temperature: float = 0.7) -> ChatOpenAI:
+    model_by_category = {
+        "tech": settings.MODEL_TECH,
+        "general": settings.MODEL_GENERAL,
+    }
+    model = model_by_category.get(category, settings.MODEL_TECH)
     headers = {
         "HTTP-Referer": settings.OPENROUTER_REFERER or "https://sokrat.local",
         "X-Title": "Sokrat AI Interviewer",
     }
     return ChatOpenAI(
-        model=settings.MODEL_NAME,
+        model=model,
         api_key=settings.OPENROUTER_API_KEY or "missing",
         base_url=settings.OPENROUTER_BASE_URL,
         temperature=temperature,
@@ -23,6 +28,10 @@ def get_chat_model(temperature: float = 0.7) -> ChatOpenAI:
         max_retries=2,
         default_headers=headers,
     )
+
+
+def get_chat_model(temperature: float = 0.7) -> ChatOpenAI:
+    return get_chat_model_for("tech", temperature)
 
 
 def extract_text(content: Any) -> str:

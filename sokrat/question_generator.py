@@ -8,7 +8,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
-from .llm import extract_text, get_chat_model
+from .llm import extract_text, get_chat_model_for
 from .prompts import load_prompt
 
 log = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ def generate_questions(
     count: int,
     existing: list[str],
     required_skills: list[str] | None = None,
+    role_category: str = "tech",
 ) -> list[dict[str, Any]]:
     if count <= 0:
         return []
@@ -83,7 +84,7 @@ def generate_questions(
     )
 
     try:
-        model = get_chat_model(temperature=0.8)
+        model = get_chat_model_for(role_category, temperature=0.8)
         response = model.invoke([HumanMessage(content=prompt)])
         raw = extract_text(response.content)
     except Exception:
