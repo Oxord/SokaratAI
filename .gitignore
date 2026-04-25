@@ -1,0 +1,8 @@
+.env
+data/sessions/
+__pycache__/
+*.pyc
+.chainlit/
+*.egg-info/
+.venv/
+venv/
