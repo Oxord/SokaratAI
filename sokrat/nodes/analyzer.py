@@ -101,11 +101,11 @@ def analyze_answer_node(state: InterviewState) -> dict[str, Any]:
         new_answer = {
             "question": question,
             "answer": answer_text,
-            "score": 5,
+            "score": 0,
             "strengths": [],
             "weaknesses": [],
-            "feedback": "Не удалось проанализировать ответ автоматически.",
-            "category": "other",
+            "feedback": "Не удалось проанализировать ответ — давай попробуем ещё раз.",
+            "category": "error",
         }
 
     answers.append(new_answer)

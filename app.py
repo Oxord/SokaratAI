@@ -4,9 +4,15 @@ import random
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import chainlit as cl
 from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field, ValidationError
+
+from sokrat.llm import get_chat_model
+from sokrat.prompts import load_prompt
 
 load_dotenv()
 
@@ -20,24 +26,6 @@ INTERVIEW_TYPES = {
     "technical": "Техническое (стек, фреймворки, инструменты)",
     "hr": "HR / Поведенческое (STAR, мотивация, конфликты)",
     "mixed": "Смешанное (технические + HR вопросы)",
-}
-
-FEEDBACK_TEMPLATES = {
-    "excellent": [
-        "Отличный ответ! Ты чётко раскрыл ключевые концепции и дал конкретные примеры.",
-        "Превосходно. Твоё объяснение демонстрирует глубокое понимание темы.",
-        "Очень полно. Ты охватил все важные аспекты и добавил полезный контекст.",
-    ],
-    "good": [
-        "Хороший ответ. Ты затронул основные моменты, хотя можно было раскрыть подробнее.",
-        "Крепкий ответ. Ты показал понимание сути вопроса.",
-        "Неплохо. В следующий раз попробуй добавить конкретный пример — это усилит ответ.",
-    ],
-    "needs_work": [
-        "Ответ требует большей глубины. Постарайся использовать конкретные термины и примеры.",
-        "Ты затронул тему, но объяснение неполное. Попробуй структурировать ответ: определение → пример → вывод.",
-        "Попробуй выстроить ответ чётче: сначала суть концепции, затем пример из практики.",
-    ],
 }
 
 RECOMMENDATION_TEMPLATES = {
@@ -128,42 +116,78 @@ def get_questions(db: dict, role: str, level: str, interview_type: str) -> list[
     return selected
 
 
-# ── Mock analysis (BACKEND INTEGRATION POINT) ────────────────────────────────
-# Replace this function body with a call to the LangGraph graph:
-#   result = await graph.ainvoke({"node": "analyze_answer", "question": question, "answer": answer, ...})
-#   return result["analysis"]
+# ── LLM analysis ──────────────────────────────────────────────────────────────
 
-def mock_analyze_answer(question: dict, answer: str) -> dict:
-    answer_lower = answer.lower()
-    matched = [kw for kw in question.get("ideal_keywords", []) if kw.lower() in answer_lower]
-    keyword_score = min(len(matched), 5)
-    base_score = 5 + keyword_score
-    jitter = random.choice([-1, 0, 0, 1])
-    final_score = max(5, min(10, base_score + jitter))
+ALLOWED_INTENTS = ("answer", "clarification", "dont_know", "skip", "meta")
+ALLOWED_CATEGORIES = (
+    "fundamentals", "system_design", "coding", "debugging",
+    "soft_skills", "motivation", "behavioral", "other",
+)
 
-    if final_score >= 8:
-        verdict = "excellent"
-    elif final_score >= 6:
-        verdict = "good"
+
+class AnswerEvaluation(BaseModel):
+    intent: str
+    score: Optional[int] = Field(default=None, ge=0, le=10)
+    feedback: str
+    explanation: Optional[str] = None
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    category: str = "other"
+
+
+def _coerce_evaluation(value) -> AnswerEvaluation:
+    if isinstance(value, AnswerEvaluation):
+        result = value
+    elif isinstance(value, dict):
+        result = AnswerEvaluation.model_validate(value)
     else:
-        verdict = "needs_work"
+        raise ValueError(f"Unexpected analyzer output type: {type(value).__name__}")
 
-    feedback = random.choice(FEEDBACK_TEMPLATES[verdict])
+    if result.intent not in ALLOWED_INTENTS:
+        result.intent = "answer"
+    if result.category not in ALLOWED_CATEGORIES:
+        result.category = "other"
+    return result
 
-    hints = question.get("hints", [])
-    if not matched and hints:
-        tip = f"💡 Подсказка: подумай о **{hints[0]}**"
-        if len(hints) > 1:
-            tip += f" и **{hints[1]}**"
-        feedback = tip + ".\n\n" + feedback
 
-    return {
-        "score": final_score,
-        "verdict": verdict,
-        "feedback": feedback,
-        "matched_keywords": matched,
-        "question_id": question.get("id", ""),
-    }
+def analyze_answer_llm(
+    role: str,
+    level: str,
+    interview_type: str,
+    question: str,
+    hints: list[str],
+    answer: str,
+    clarifications_used: int,
+) -> AnswerEvaluation:
+    template = load_prompt("analyzer")
+    hints_text = ", ".join(hints) if hints else "(подсказок нет)"
+    prompt = template.format(
+        role=role,
+        level=level,
+        interview_type=interview_type,
+        question=question,
+        hints=hints_text,
+        answer=answer,
+        clarifications_used=clarifications_used,
+    )
+
+    model = get_chat_model(temperature=0.3)
+    structured = model.with_structured_output(AnswerEvaluation, method="json_mode")
+
+    try:
+        return _coerce_evaluation(structured.invoke([HumanMessage(content=prompt)]))
+    except (ValidationError, ValueError):
+        retry_messages = [
+            SystemMessage(
+                content=(
+                    "ВЕРНИ СТРОГО валидный JSON-объект, "
+                    "полностью соответствующий схеме, "
+                    "без markdown, без префиксов, без пояснений."
+                )
+            ),
+            HumanMessage(content=prompt),
+        ]
+        return _coerce_evaluation(structured.invoke(retry_messages))
 
 
 # ── Mock summary (BACKEND INTEGRATION POINT) ─────────────────────────────────
@@ -179,13 +203,16 @@ def mock_generate_summary(
     answers: list[str],
     scores: list[dict],
 ) -> dict:
-    score_values = [s["score"] for s in scores]
-    total = sum(score_values)
-    max_possible = TOTAL_QUESTIONS * 10
-    avg = total / len(score_values) if score_values else 0
-    percentage = round(avg / 10 * 100, 1)
+    counted = [s["score"] for s in scores if s["score"] > 0]
+    skipped_count = sum(1 for s in scores if s["score"] == 0)
+    total = sum(counted)
+    max_possible = len(counted) * 10
+    avg = total / len(counted) if counted else 0
+    percentage = round(avg / 10 * 100, 1) if counted else 0.0
 
-    if avg >= 8.0:
+    if not counted:
+        verdict = "Needs Work"
+    elif avg >= 8.0:
         verdict = "Strong"
     elif avg >= 6.5:
         verdict = "Competent"
@@ -200,7 +227,7 @@ def mock_generate_summary(
     improvements = [
         questions[i]["question"]
         for i, s in enumerate(scores)
-        if s["score"] <= 6 and i < len(questions)
+        if 0 < s["score"] <= 6 and i < len(questions)
     ]
 
     return {
@@ -211,6 +238,8 @@ def mock_generate_summary(
         "verdict": verdict,
         "strengths": strengths,
         "improvements": improvements,
+        "skipped_count": skipped_count,
+        "counted_count": len(counted),
         "recommendation": RECOMMENDATION_TEMPLATES[verdict],
         "per_question": scores,
     }
@@ -275,11 +304,22 @@ def _init_session():
     cl.user_session.set("answers", [])
     cl.user_session.set("scores", [])
     cl.user_session.set("questions_db", load_questions_db())
+    cl.user_session.set("clarifications_used", 0)
+    cl.user_session.set("pending_dont_know", False)
 
 
-VERDICT_EMOJI = {"excellent": "✅", "good": "👍", "needs_work": "⚠️"}
-VERDICT_LABEL = {"excellent": "Отлично", "good": "Хорошо", "needs_work": "Можно лучше"}
 TYPE_LABEL = {"technical": "Техническое", "hr": "HR / Поведенческое", "mixed": "Смешанное"}
+
+
+def verdict_for_score(score: int) -> tuple[str, str, str]:
+    """Returns (verdict_key, emoji, label) based on numeric score."""
+    if score == 0:
+        return "skipped", "⏭️", "Пропущено"
+    if score >= 8:
+        return "excellent", "✅", "Отлично"
+    if score >= 6:
+        return "good", "👍", "Хорошо"
+    return "needs_work", "⚠️", "Можно лучше"
 
 
 # ── Chainlit handlers ─────────────────────────────────────────────────────────
@@ -425,54 +465,119 @@ async def _ask_next_question():
 
 
 async def _handle_answer(answer_text: str):
-    if len(answer_text.strip()) < 10:
-        await cl.Message(
-            content=(
-                "Ответ слишком короткий. Пожалуйста, дай развёрнутый ответ — "
-                "расскажи, что ты знаешь по этой теме."
-            )
-        ).send()
-        return
-
     question_num = cl.user_session.get("question_num")
     questions = cl.user_session.get("questions")
-    answers: list = cl.user_session.get("answers")
-    scores: list = cl.user_session.get("scores")
 
     if question_num >= len(questions):
         return
 
     question = questions[question_num]
+    role = cl.user_session.get("role")
+    level = cl.user_session.get("level")
+    interview_type = cl.user_session.get("interview_type")
+    clarifications_used = cl.user_session.get("clarifications_used") or 0
+
+    try:
+        async with cl.Step(name="Анализ ответа", type="tool") as step:
+            analysis = analyze_answer_llm(
+                role=role,
+                level=level,
+                interview_type=interview_type,
+                question=question["question"],
+                hints=question.get("hints", []),
+                answer=answer_text,
+                clarifications_used=clarifications_used,
+            )
+            if analysis.score is not None:
+                _, emoji, label = verdict_for_score(analysis.score)
+                step.output = f"{emoji} {label} · {analysis.score}/10 · intent={analysis.intent}"
+            else:
+                step.output = f"intent={analysis.intent} (без оценки)"
+    except Exception:  # noqa: BLE001
+        await cl.Message(
+            content=(
+                "Что-то пошло не так с анализом ответа. "
+                "Попробуй сформулировать ещё раз — или иначе."
+            )
+        ).send()
+        return
+
+    if analysis.intent == "clarification":
+        await _handle_clarification(analysis, clarifications_used)
+        return
+
+    if analysis.intent == "dont_know":
+        if cl.user_session.get("pending_dont_know"):
+            await _record_and_advance(question, answer_text, analysis, score_override=0)
+            return
+        await _handle_dont_know(analysis)
+        return
+
+    if analysis.intent == "meta":
+        await cl.Message(content=analysis.feedback).send()
+        return
+
+    if analysis.intent == "skip":
+        await _record_and_advance(question, answer_text, analysis, score_override=0)
+        return
+
+    # intent == "answer"
+    score = analysis.score if analysis.score is not None else 1
+    await _record_and_advance(question, answer_text, analysis, score_override=score)
+
+
+async def _handle_clarification(analysis: AnswerEvaluation, clarifications_used: int):
+    cl.user_session.set("clarifications_used", clarifications_used + 1)
+    parts = []
+    if analysis.feedback:
+        parts.append(analysis.feedback)
+    if analysis.explanation:
+        parts.append(analysis.explanation)
+    await cl.Message(content="\n\n".join(parts) or "Давай разберём вопрос.").send()
+
+
+async def _handle_dont_know(analysis: AnswerEvaluation):
+    cl.user_session.set("pending_dont_know", True)
+    await cl.Message(content=analysis.feedback).send()
+
+
+async def _record_and_advance(
+    question: dict,
+    answer_text: str,
+    analysis: AnswerEvaluation,
+    score_override: int,
+):
+    answers: list = cl.user_session.get("answers")
+    scores: list = cl.user_session.get("scores")
+    question_num = cl.user_session.get("question_num")
+
+    _, emoji, label = verdict_for_score(score_override)
+
     answers.append(answer_text)
-
-    async with cl.Step(name="Анализ ответа", type="tool") as step:
-        analysis = mock_analyze_answer(question, answer_text)
-        emoji = VERDICT_EMOJI[analysis["verdict"]]
-        label = VERDICT_LABEL[analysis["verdict"]]
-        step.output = f"{emoji} {label} · {analysis['score']}/10"
-
     scores.append(
         {
-            "score": analysis["score"],
-            "verdict": analysis["verdict"],
-            "feedback": analysis["feedback"],
-            "matched_keywords": analysis["matched_keywords"],
-            "question_id": analysis["question_id"],
+            "score": score_override,
+            "verdict": label,
+            "feedback": analysis.feedback,
+            "strengths": analysis.strengths,
+            "weaknesses": analysis.weaknesses,
+            "category": analysis.category,
+            "intent": analysis.intent,
+            "question_id": question.get("id", ""),
         }
     )
 
     cl.user_session.set("answers", answers)
     cl.user_session.set("scores", scores)
     cl.user_session.set("question_num", question_num + 1)
+    cl.user_session.set("clarifications_used", 0)
+    cl.user_session.set("pending_dont_know", False)
 
-    emoji = VERDICT_EMOJI[analysis["verdict"]]
-    label = VERDICT_LABEL[analysis["verdict"]]
-    await cl.Message(
-        content=(
-            f"{emoji} **{label}** — {analysis['score']}/10\n\n"
-            f"{analysis['feedback']}"
-        )
-    ).send()
+    if score_override == 0:
+        message = f"{emoji} **{label}**\n\n{analysis.feedback}"
+    else:
+        message = f"{emoji} **{label}** — {score_override}/10\n\n{analysis.feedback}"
+    await cl.Message(content=message).send()
 
     await _ask_next_question()
 
@@ -515,17 +620,29 @@ async def _finish_interview():
 
     per_q_lines = []
     for i, (q, s) in enumerate(zip(questions, scores), 1):
-        e = VERDICT_EMOJI[s["verdict"]]
-        per_q_lines.append(f"{i}. {e} {s['score']}/10 — {q['question'][:60]}...")
+        _, e, _ = verdict_for_score(s["score"])
+        if s["score"] == 0:
+            per_q_lines.append(f"{i}. {e} пропущено — {q['question'][:60]}...")
+        else:
+            per_q_lines.append(f"{i}. {e} {s['score']}/10 — {q['question'][:60]}...")
 
     per_q_text = "\n".join(per_q_lines)
+
+    if summary["counted_count"] == 0:
+        result_line = "Все вопросы пропущены — попробуй ещё раз и отвечай хоть как-нибудь."
+    else:
+        result_line = (
+            f"### Общий результат: {summary['total_score']}/{summary['max_possible']} "
+            f"({summary['percentage']}%) — **{summary['verdict']}**"
+        )
+        if summary["skipped_count"] > 0:
+            result_line += f"\n\n_Учтено {summary['counted_count']} ответов из {len(scores)} (пропущено: {summary['skipped_count']})_"
 
     report = (
         f"## Итоговый отчёт по интервью\n\n"
         f"**Роль:** {role} | **Уровень:** {level} | **Тип:** {type_label}\n\n"
         f"---\n\n"
-        f"### Общий результат: {summary['total_score']}/{summary['max_possible']} "
-        f"({summary['percentage']}%) — **{summary['verdict']}**\n\n"
+        f"{result_line}\n\n"
         f"### Сильные стороны\n{strengths_text}\n\n"
         f"### Над чем поработать\n{improvements_text}\n\n"
         f"### По вопросам\n{per_q_text}\n\n"
@@ -545,9 +662,12 @@ async def _finish_interview():
             "question_text": q["question"],
             "answer": answers[i] if i < len(answers) else "",
             "score": scores[i]["score"],
-            "verdict": scores[i]["verdict"],
+            "verdict": scores[i].get("verdict", ""),
             "feedback": scores[i]["feedback"],
-            "matched_keywords": scores[i].get("matched_keywords", []),
+            "intent": scores[i].get("intent", "answer"),
+            "strengths": scores[i].get("strengths", []),
+            "weaknesses": scores[i].get("weaknesses", []),
+            "category": scores[i].get("category", "other"),
         }
         for i, q in enumerate(questions)
         if i < len(scores)
