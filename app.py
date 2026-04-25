@@ -6,22 +6,28 @@ import random
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 from urllib.parse import quote_plus
 
 import chainlit as cl
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, Field, ValidationError
 
-from sokrat.llm import get_chat_model_for
-from sokrat.prompts import load_prompt
+from sokrat.analyzer import AnswerEvaluation, DIMENSION_LABELS
+from sokrat.graph import (
+    PHASE_ANALYZE,
+    PHASE_FINALIZE,
+    PHASE_NEXT_QUESTION,
+    PHASE_PERSIST,
+    PHASE_START,
+    build_graph,
+)
 from sokrat.question_generator import generate_questions
 from sokrat.resource_generator import generate_resources
 from sokrat.role_classifier import classify_role
 from sokrat.stt import SaluteSpeechError, get_stt_client
+from sokrat.summary_builder import compute_summary
+
+_GRAPH = build_graph()
 
 log = logging.getLogger(__name__)
 
@@ -121,24 +127,6 @@ INTERVIEW_MODES = {
     "quick":  ("Быстрое",  "4–6 вопросов, поверхностный прогон"),
     "medium": ("Среднее",  "адаптивно под уровень и скиллы (6–18)"),
     "full":   ("Полное",   "14–20 вопросов, глубокий разбор"),
-}
-
-RECOMMENDATION_TEMPLATES = {
-    "Strong": (
-        "Отличный результат! Ты уверенно ответил на большинство вопросов. "
-        "Ты хорошо подготовлен к этому уровню. "
-        "Сосредоточься на паре слабых мест из списка выше — и будешь готов к реальному интервью."
-    ),
-    "Competent": (
-        "Хорошая база. Ты понимаешь ключевые концепции, но есть области для роста. "
-        "Проработай темы из раздела «Над чем поработать» — это значительно укрепит твою позицию. "
-        "Продолжай практиковаться, и скоро выйдешь на уверенный уровень."
-    ),
-    "Needs Work": (
-        "Есть над чем поработать. Не расстраивайся — это именно то, для чего и создан Сократ. "
-        "Повтори фундаментальные концепции по темам из раздела «Над чем поработать». "
-        "Попробуй пройти интервью ещё раз через несколько дней — результат улучшится."
-    ),
 }
 
 FALLBACK_QUESTIONS = [
@@ -331,172 +319,11 @@ def get_personalized_questions(
     return selected[:count]
 
 
-# ── LLM analysis ──────────────────────────────────────────────────────────────
-
-ALLOWED_INTENTS = ("answer", "clarification", "dont_know", "skip", "meta")
-ALLOWED_CATEGORIES = (
-    "fundamentals", "system_design", "coding", "debugging",
-    "soft_skills", "motivation", "behavioral", "other",
-)
-
-
-class AnswerEvaluation(BaseModel):
-    intent: str
-    score: Optional[int] = Field(default=None, ge=0, le=10)
-    feedback: str
-    explanation: Optional[str] = None
-    strengths: list[str] = Field(default_factory=list)
-    weaknesses: list[str] = Field(default_factory=list)
-    category: str = "other"
-    skills_touched: list[str] = Field(default_factory=list)
-    # Многомерная оценка (для радар-графика по итогам интервью).
-    # Заполняется только при intent="answer"; для skip/dont_know/clarification/meta — None.
-    role_fit: Optional[int] = Field(default=None, ge=0, le=10)
-    structure: Optional[int] = Field(default=None, ge=0, le=10)
-    literacy: Optional[int] = Field(default=None, ge=0, le=10)
-    oratory: Optional[int] = Field(default=None, ge=0, le=10)
-    depth: Optional[int] = Field(default=None, ge=0, le=10)
-    # Краткий эталонный ответ — заполняется, когда пользователь ответил слабо
-    # (или пропустил / сказал «не знаю»), чтобы показать «как было бы правильно».
-    ideal_answer: Optional[str] = None
-
-
-# Названия размерностей радар-графика — также используются в подписях UI.
-DIMENSION_LABELS: dict[str, str] = {
-    "role_fit": "Соответствие должности",
-    "structure": "Структура ответа",
-    "literacy": "Грамотность",
-    "oratory": "Ораторское мастерство",
-    "depth": "Глубина знаний",
-    "pace": "Темп",
-}
+# ── Resources / weak topics ──────────────────────────────────────────────────
 
 # Жёсткий потолок на тиканье таймера, чтобы фоновая задача не жила вечно,
 # если пользователь ушёл со страницы или забыл про вкладку.
 TIMER_HARD_CAP_SEC = 30 * 60
-
-
-def _coerce_evaluation(value) -> AnswerEvaluation:
-    if isinstance(value, AnswerEvaluation):
-        result = value
-    elif isinstance(value, dict):
-        result = AnswerEvaluation.model_validate(value)
-    else:
-        raise ValueError(f"Unexpected analyzer output type: {type(value).__name__}")
-
-    if result.intent not in ALLOWED_INTENTS:
-        result.intent = "answer"
-    if result.category not in ALLOWED_CATEGORIES:
-        result.category = "other"
-    return result
-
-
-def _filter_skills_touched(touched: list[str], canonical: list[str]) -> list[str]:
-    if not touched or not canonical:
-        return []
-    canon_lower = {s.lower(): s for s in canonical}
-    out: list[str] = []
-    seen: set[str] = set()
-    for raw in touched:
-        key = str(raw).strip().lower()
-        if key in canon_lower and canon_lower[key] not in seen:
-            out.append(canon_lower[key])
-            seen.add(canon_lower[key])
-    return out
-
-
-def analyze_answer_llm(
-    role: str,
-    level: str,
-    interview_type: str,
-    question: str,
-    hints: list[str],
-    answer: str,
-    clarifications_used: int,
-    required_skills: list[str] | None = None,
-    elapsed_seconds: float = 0.0,
-    role_category: str = "tech",
-) -> AnswerEvaluation:
-    template = load_prompt("analyzer")
-    hints_text = ", ".join(hints) if hints else "(подсказок нет)"
-    skills = [s for s in (required_skills or []) if s]
-    skills_text = ", ".join(skills) if skills else "(не указаны)"
-    prompt = template.format(
-        role=role,
-        level=level,
-        interview_type=interview_type,
-        question=question,
-        hints=hints_text,
-        answer=answer,
-        clarifications_used=clarifications_used,
-        required_skills=skills_text,
-        elapsed_seconds=_format_elapsed(elapsed_seconds),
-    )
-
-    model = get_chat_model_for(role_category, temperature=0.3)
-    structured = model.with_structured_output(AnswerEvaluation, method="json_mode")
-
-    try:
-        return _coerce_evaluation(structured.invoke([HumanMessage(content=prompt)]))
-    except (ValidationError, ValueError):
-        retry_messages = [
-            SystemMessage(
-                content=(
-                    "ВЕРНИ СТРОГО валидный JSON-объект, "
-                    "полностью соответствующий схеме, "
-                    "без markdown, без префиксов, без пояснений."
-                )
-            ),
-            HumanMessage(content=prompt),
-        ]
-        return _coerce_evaluation(structured.invoke(retry_messages))
-
-
-# ── Mock summary (BACKEND INTEGRATION POINT) ─────────────────────────────────
-# Replace this function body with a call to the LangGraph graph:
-#   result = await graph.ainvoke({"node": "summary", "answers": answers, "scores": scores, ...})
-#   return result["summary"]
-
-def _compute_dimension_averages(scores: list[dict]) -> dict[str, float]:
-    """Mean per dimension across answers that actually got a numeric rating.
-
-    Skipped / dont_know / clarification entries have None for these fields and
-    are excluded so they don't drag the radar to zero.
-    """
-    averages: dict[str, float] = {}
-    for key in DIMENSION_LABELS:
-        values = [s.get(key) for s in scores if isinstance(s.get(key), int)]
-        if values:
-            averages[key] = round(sum(values) / len(values), 1)
-        else:
-            averages[key] = 0.0
-    return averages
-
-
-def _compute_skills_coverage(
-    required_skills: list[str], scores: list[dict]
-) -> list[dict]:
-    if not required_skills:
-        return []
-    coverage: list[dict] = []
-    for skill in required_skills:
-        hits: list[int] = []
-        for score in scores:
-            touched = score.get("skills_touched") or []
-            if any(t.lower() == skill.lower() for t in touched) and score.get("score", 0) > 0:
-                hits.append(score["score"])
-        if hits:
-            avg = round(sum(hits) / len(hits), 1)
-        else:
-            avg = 0.0
-        coverage.append(
-            {
-                "skill": skill,
-                "questions_count": len(hits),
-                "avg_score": avg,
-            }
-        )
-    return coverage
 
 
 _RESOURCE_TYPE_EMOJI = {
@@ -615,69 +442,6 @@ def _format_resources_section(resources: list[dict]) -> str:
     return "\n".join(blocks) + "\n"
 
 
-def mock_generate_summary(
-    role: str,
-    level: str,
-    interview_type: str,
-    questions: list[dict],
-    answers: list[str],
-    scores: list[dict],
-    required_skills: list[str] | None = None,
-) -> dict:
-    counted = [s["score"] for s in scores if s["score"] > 0]
-    skipped_count = sum(1 for s in scores if s["score"] == 0)
-    total = sum(counted)
-    max_possible = len(counted) * 10
-    avg = total / len(counted) if counted else 0
-    percentage = round(avg / 10 * 100, 1) if counted else 0.0
-
-    if not counted:
-        verdict = "Needs Work"
-    elif avg >= 8.0:
-        verdict = "Strong"
-    elif avg >= 6.5:
-        verdict = "Competent"
-    else:
-        verdict = "Needs Work"
-
-    strengths = [
-        questions[i]["question"]
-        for i, s in enumerate(scores)
-        if s["score"] >= 8 and i < len(questions)
-    ]
-    improvements = [
-        questions[i]["question"]
-        for i, s in enumerate(scores)
-        if 0 < s["score"] <= 6 and i < len(questions)
-    ]
-
-    elapsed_values = [
-        s["elapsed_seconds"]
-        for s in scores
-        if isinstance(s.get("elapsed_seconds"), (int, float))
-    ]
-    total_time = sum(elapsed_values)
-    avg_time = total_time / len(elapsed_values) if elapsed_values else 0.0
-
-    return {
-        "avg_score": round(avg, 1),
-        "total_score": total,
-        "max_possible": max_possible,
-        "percentage": percentage,
-        "verdict": verdict,
-        "strengths": strengths,
-        "improvements": improvements,
-        "skipped_count": skipped_count,
-        "counted_count": len(counted),
-        "recommendation": RECOMMENDATION_TEMPLATES[verdict],
-        "per_question": scores,
-        "skills_coverage": _compute_skills_coverage(required_skills or [], scores),
-        "dimensions": _compute_dimension_averages(scores),
-        "total_time_seconds": round(total_time, 1),
-        "avg_time_seconds": round(avg_time, 1),
-    }
-
-
 def _build_radar_figure(dimensions: dict[str, float]):
     """Plotly radar chart over interview dimensions. Lazy-imports plotly so the
     rest of the app keeps working even if the dependency is not installed yet.
@@ -714,19 +478,6 @@ def _build_radar_figure(dimensions: dict[str, float]):
         title="Профиль интервью (0–10)",
     )
     return fig
-
-
-# ── Session persistence ───────────────────────────────────────────────────────
-
-def save_session(session_id: str, data: dict) -> Path | None:
-    try:
-        SESSION_DIR.mkdir(parents=True, exist_ok=True)
-        path = SESSION_DIR / f"{session_id}.json"
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        return path
-    except OSError:
-        return None
 
 
 # ── Button factories ──────────────────────────────────────────────────────────
@@ -868,6 +619,38 @@ def _init_session():
     cl.user_session.set("question_timer_msg", None)
     cl.user_session.set("question_timer_task", None)
     cl.user_session.set("params_msg", None)
+
+
+def _build_graph_state(current_step: str, **extra) -> dict:
+    """Snapshot the live cl.user_session into an InterviewState dict for the
+    LangGraph. Per-turn fields (user_input, elapsed_seconds, …) are passed via
+    `extra` so callers can override without polluting cl.user_session."""
+    state: dict = {
+        "session_id": cl.user_session.get("session_id") or "",
+        "role": cl.user_session.get("role"),
+        "role_category": cl.user_session.get("role_category") or "tech",
+        "level": cl.user_session.get("level"),
+        "interview_type": cl.user_session.get("interview_type"),
+        "interview_mode": cl.user_session.get("interview_mode"),
+        "is_custom_role": bool(cl.user_session.get("is_custom_role")),
+        "required_skills": list(cl.user_session.get("required_skills") or []),
+        "questions": list(cl.user_session.get("questions") or []),
+        "question_num": cl.user_session.get("question_num") or 0,
+        "answers": list(cl.user_session.get("answers") or []),
+        "scores": list(cl.user_session.get("scores") or []),
+        "clarifications_used": cl.user_session.get("clarifications_used") or 0,
+        "started_at": cl.user_session.get("started_at"),
+        "summary": cl.user_session.get("summary"),
+        "current_step": current_step,
+    }
+    state.update(extra)
+    return {k: v for k, v in state.items() if v is not None}
+
+
+async def _run_graph(current_step: str, **extra) -> dict:
+    """Drive the LangGraph for one phase. Returns the resulting state dict."""
+    state = _build_graph_state(current_step, **extra)
+    return await asyncio.to_thread(_GRAPH.invoke, state)
 
 
 _MAX_SKILLS = 10
@@ -1249,6 +1032,13 @@ async def _start_interview():
     cl.user_session.set("scores", [])
     cl.user_session.set("state", "in_interview")
 
+    # Drive the dialog initialization through the LangGraph: greeting node
+    # stamps started_at, collect_context validates the role/level/type set
+    # earlier via Chainlit buttons. Failures here surface as state.errors.
+    init_state = await _run_graph(PHASE_START)
+    if init_state.get("started_at"):
+        cl.user_session.set("started_at", init_state["started_at"])
+
     skills_line = (
         f"- Навыки в фокусе: **{', '.join(required_skills)}**\n"
         if required_skills
@@ -1342,7 +1132,9 @@ async def _ask_next_question():
         await _finish_interview()
         return
 
-    q = questions[question_num]
+    # Pick the next question through the LangGraph (interview node).
+    next_state = await _run_graph(PHASE_NEXT_QUESTION)
+    q = next_state.get("current_question") or questions[question_num]
     interview_type = cl.user_session.get("interview_type", "")
     type_tag = TYPE_LABEL.get(interview_type, interview_type)
     emoji = TYPE_EMOJI.get(interview_type, "🎯")
@@ -1373,30 +1165,21 @@ async def _handle_answer(answer_text: str):
     elapsed_seconds = _stop_question_timer()
 
     question = questions[question_num]
-    role = cl.user_session.get("role")
-    level = cl.user_session.get("level")
-    interview_type = cl.user_session.get("interview_type")
-    role_category: str = cl.user_session.get("role_category") or "tech"
-    clarifications_used = cl.user_session.get("clarifications_used") or 0
-    required_skills: list[str] = cl.user_session.get("required_skills") or []
 
     try:
         async with cl.Step(name="Анализ ответа", type="tool") as step:
-            analysis = analyze_answer_llm(
-                role=role,
-                level=level,
-                interview_type=interview_type,
-                question=question["question"],
-                hints=question.get("hints", []),
-                answer=answer_text,
-                clarifications_used=clarifications_used,
-                required_skills=required_skills,
+            # Route the LLM analysis through the LangGraph analyze_answer node.
+            # The node also runs filter_skills_touched on the result.
+            result_state = await _run_graph(
+                PHASE_ANALYZE,
+                user_input=answer_text,
                 elapsed_seconds=elapsed_seconds,
-                role_category=role_category,
+                current_question=question,
             )
-            analysis.skills_touched = _filter_skills_touched(
-                analysis.skills_touched, required_skills
-            )
+            last_analysis = result_state.get("last_analysis")
+            if not last_analysis:
+                raise RuntimeError("analyze_answer node returned no analysis")
+            analysis = AnswerEvaluation.model_validate(last_analysis)
             if analysis.score is not None:
                 _, emoji, label = verdict_for_score(analysis.score)
                 step.output = f"{emoji} {label} · {analysis.score}/10 · intent={analysis.intent}"
@@ -1412,7 +1195,9 @@ async def _handle_answer(answer_text: str):
         return
 
     if analysis.intent == "clarification":
-        await _handle_clarification(analysis, clarifications_used)
+        await _handle_clarification(
+            analysis, cl.user_session.get("clarifications_used") or 0
+        )
         return
 
     if analysis.intent == "dont_know":
@@ -1552,7 +1337,9 @@ async def _finish_interview():
     await cl.Message(content="Интервью завершено! Формирую отчёт...").send()
 
     async with cl.Step(name="Генерация итогового отчёта", type="tool") as step:
-        summary = mock_generate_summary(
+        # Summary computation runs through the LangGraph summarize node.
+        finalize_state = await _run_graph(PHASE_FINALIZE)
+        summary = finalize_state.get("summary") or compute_summary(
             role, level, interview_type, questions, answers, scores, required_skills
         )
         step.output = (
@@ -1572,6 +1359,8 @@ async def _finish_interview():
         except Exception:
             log.exception("resource generation failed (best-effort, ignored)")
             resources = []
+    summary["resources"] = resources
+    cl.user_session.set("summary", summary)
 
     # Format report
     type_label = INTERVIEW_TYPES.get(interview_type, interview_type)
@@ -1702,64 +1491,9 @@ async def _finish_interview():
     )
     await cl.Message(content=report).send()
 
-    # Build and save session JSON
-    qa_pairs = [
-        {
-            "question_num": i + 1,
-            "question_id": q.get("id", ""),
-            "question_text": q["question"],
-            "answer": answers[i] if i < len(answers) else "",
-            "score": scores[i]["score"],
-            "verdict": scores[i].get("verdict", ""),
-            "feedback": scores[i]["feedback"],
-            "intent": scores[i].get("intent", "answer"),
-            "strengths": scores[i].get("strengths", []),
-            "weaknesses": scores[i].get("weaknesses", []),
-            "category": scores[i].get("category", "other"),
-            "skills_touched": scores[i].get("skills_touched", []),
-            "role_fit": scores[i].get("role_fit"),
-            "structure": scores[i].get("structure"),
-            "literacy": scores[i].get("literacy"),
-            "oratory": scores[i].get("oratory"),
-            "depth": scores[i].get("depth"),
-            "pace": scores[i].get("pace"),
-            "elapsed_seconds": scores[i].get("elapsed_seconds"),
-            "ideal_answer": scores[i].get("ideal_answer"),
-        }
-        for i, q in enumerate(questions)
-        if i < len(scores)
-    ]
-
-    session_data = {
-        "session_id": session_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "role": role,
-        "role_category": role_category,
-        "level": level,
-        "level_display": _level_display(level),
-        "interview_type": interview_type,
-        "interview_mode": cl.user_session.get("interview_mode"),
-        "is_custom_role": bool(cl.user_session.get("is_custom_role")),
-        "required_skills": required_skills,
-        "summary": {
-            "avg_score": summary["avg_score"],
-            "total_score": summary["total_score"],
-            "max_possible": summary["max_possible"],
-            "percentage": summary["percentage"],
-            "verdict": summary["verdict"],
-            "strengths": summary["strengths"],
-            "improvements": summary["improvements"],
-            "recommendation": summary["recommendation"],
-            "skills_coverage": summary.get("skills_coverage", []),
-            "dimensions": summary.get("dimensions", {}),
-            "total_time_seconds": summary.get("total_time_seconds", 0.0),
-            "avg_time_seconds": summary.get("avg_time_seconds", 0.0),
-            "resources": resources,
-        },
-        "qa_pairs": qa_pairs,
-    }
-
-    saved_path = save_session(session_id, session_data)
+    # Persist the session through the LangGraph save_session node.
+    persist_state = await _run_graph(PHASE_PERSIST)
+    saved_path = persist_state.get("saved_path")
     if saved_path:
         await cl.Message(
             content=f"Сессия сохранена в `{saved_path}`",

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from typing_extensions import NotRequired
 
-Level = Literal["junior", "middle", "senior"]
+Level = Literal["Junior", "Middle", "Senior"]
 InterviewType = Literal["technical", "hr", "mixed"]
 StepName = Literal[
     "greeting",
@@ -12,6 +12,7 @@ StepName = Literal[
     "interview",
     "analyze_answer",
     "summary",
+    "save_session",
     "done",
 ]
 
@@ -26,25 +27,44 @@ class Answer(TypedDict):
     category: str
 
 
-class InterviewState(TypedDict):
+class InterviewState(TypedDict, total=False):
+    """Single source of truth for an interview session.
+
+    All fields except `session_id` and `current_step` are optional — the graph
+    populates them as the dialog progresses. App.py mirrors this state to
+    `cl.user_session` and back when invoking the graph.
+    """
     session_id: str
-    started_at: str
+    started_at: NotRequired[str]
     finished_at: NotRequired[str]
 
     role: NotRequired[str]
-    level: NotRequired[Level]
-    interview_type: NotRequired[InterviewType]
+    role_category: NotRequired[str]
+    level: NotRequired[str]
+    interview_type: NotRequired[str]
+    interview_mode: NotRequired[str]
+    required_skills: NotRequired[list[str]]
+    is_custom_role: NotRequired[bool]
 
+    # Pre-built question pool + cursor.
+    questions: NotRequired[list[dict[str, Any]]]
+    question_num: NotRequired[int]
+    current_question: NotRequired[dict[str, Any]]
+
+    # Per-turn input/output.
     user_input: NotRequired[str]
     assistant_output: NotRequired[str]
+    elapsed_seconds: NotRequired[float]
+    clarifications_used: NotRequired[int]
+    last_analysis: NotRequired[dict[str, Any]]
 
-    questions_asked: list[str]
-    answers: list[Answer]
-    current_question: NotRequired[str]
+    # Accumulated history.
+    answers: NotRequired[list[str]]
+    scores: NotRequired[list[dict[str, Any]]]
+
+    # Final report.
+    summary: NotRequired[dict[str, Any]]
+    saved_path: NotRequired[str]
+
     current_step: StepName
-    questions_total: int
-
-    summary: NotRequired[str]
-    overall_score: NotRequired[float]
-
-    errors: list[str]
+    errors: NotRequired[list[str]]
