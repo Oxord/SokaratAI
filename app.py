@@ -232,22 +232,34 @@ def save_session(session_id: str, data: dict) -> Path | None:
 # ── Button factories ──────────────────────────────────────────────────────────
 
 def make_role_actions() -> list[cl.Action]:
-    return [cl.Action(name="select_role", label=role, value=role) for role in ROLES]
+    return [
+        cl.Action(name="select_role", label=role, payload={"value": role})
+        for role in ROLES
+    ]
 
 
 def make_level_actions() -> list[cl.Action]:
-    return [cl.Action(name="select_level", label=level, value=level) for level in LEVELS]
+    return [
+        cl.Action(name="select_level", label=level, payload={"value": level})
+        for level in LEVELS
+    ]
 
 
 def make_type_actions() -> list[cl.Action]:
     return [
-        cl.Action(name="select_type", label=label, value=key)
+        cl.Action(name="select_type", label=label, payload={"value": key})
         for key, label in INTERVIEW_TYPES.items()
     ]
 
 
 def make_restart_action() -> list[cl.Action]:
-    return [cl.Action(name="restart", label="Начать новое интервью", value="restart")]
+    return [
+        cl.Action(
+            name="restart",
+            label="Начать новое интервью",
+            payload={"value": "restart"},
+        )
+    ]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -325,22 +337,24 @@ async def _resend_selection_prompt(state: str):
 
 @cl.action_callback("select_role")
 async def on_select_role(action: cl.Action):
-    cl.user_session.set("role", action.value)
+    value = action.payload["value"]
+    cl.user_session.set("role", value)
     cl.user_session.set("state", "select_level")
     await action.remove()
     await cl.Message(
-        content=f"Роль: **{action.value}** ✓\n\nТеперь выбери уровень опыта:",
+        content=f"Роль: **{value}** ✓\n\nТеперь выбери уровень опыта:",
         actions=make_level_actions(),
     ).send()
 
 
 @cl.action_callback("select_level")
 async def on_select_level(action: cl.Action):
-    cl.user_session.set("level", action.value)
+    value = action.payload["value"]
+    cl.user_session.set("level", value)
     cl.user_session.set("state", "select_type")
     await action.remove()
     await cl.Message(
-        content=f"Уровень: **{action.value}** ✓\n\nВыбери тип интервью:",
+        content=f"Уровень: **{value}** ✓\n\nВыбери тип интервью:",
         actions=make_type_actions(),
     ).send()
 
@@ -349,7 +363,7 @@ async def on_select_level(action: cl.Action):
 async def on_select_type(action: cl.Action):
     role = cl.user_session.get("role")
     level = cl.user_session.get("level")
-    interview_type = action.value
+    interview_type = action.payload["value"]
     db = cl.user_session.get("questions_db")
 
     cl.user_session.set("interview_type", interview_type)

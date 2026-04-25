@@ -18,7 +18,8 @@ def _route_after_collect_context(state: InterviewState) -> str:
 
 
 def _route_after_analyze(state: InterviewState) -> str:
-    return state.get("current_step", "summary")
+    step = state.get("current_step", "summary")
+    return "summarize" if step == "summary" else step
 
 
 def build_graph():
@@ -27,7 +28,7 @@ def build_graph():
     g.add_node("collect_context", collect_context_node)
     g.add_node("interview", interview_node)
     g.add_node("analyze_answer", analyze_answer_node)
-    g.add_node("summary", summary_node)
+    g.add_node("summarize", summary_node)
 
     g.set_entry_point("greeting")
     g.add_edge("greeting", "collect_context")
@@ -43,10 +44,10 @@ def build_graph():
     g.add_conditional_edges(
         "analyze_answer",
         _route_after_analyze,
-        {"interview": "interview", "summary": "summary"},
+        {"interview": "interview", "summarize": "summarize"},
     )
 
-    g.add_edge("summary", END)
+    g.add_edge("summarize", END)
 
     return g.compile(
         checkpointer=MemorySaver(),
