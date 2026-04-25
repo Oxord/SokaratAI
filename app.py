@@ -179,6 +179,65 @@ def get_questions(db: dict, role: str, level: str, interview_type: str) -> list[
     return selected
 
 
+def _bank_pool(db: dict, role: str, level: str, interview_type: str) -> list[dict]:
+    try:
+        return list(db["roles"][role][level][interview_type])
+    except KeyError:
+        return []
+
+
+def get_personalized_questions(
+    db: dict,
+    role: str,
+    level: str,
+    interview_type: str,
+    required_skills: list[str],
+    is_custom_role: bool,
+) -> list[dict]:
+    """Build the 7-question set for a session.
+
+    No skills + standard role → existing fast path (bank + fallback).
+    Custom role or skills specified → mix of bank picks and skill-targeted
+    LLM questions, generated synchronously so the interview can start.
+    Skill-specific questions are NOT persisted to the bank.
+    """
+    if not required_skills and not is_custom_role:
+        return get_questions(db, role, level, interview_type)
+
+    bank_pool = _bank_pool(db, role, level, interview_type)
+
+    if required_skills:
+        bank_take = min(len(bank_pool), 2)
+    else:
+        bank_take = min(len(bank_pool), TOTAL_QUESTIONS)
+
+    bank_picked = random.sample(bank_pool, bank_take) if bank_take else []
+    need = TOTAL_QUESTIONS - len(bank_picked)
+
+    generated: list[dict] = []
+    if need > 0:
+        existing_texts = [q["question"] for q in bank_pool if isinstance(q, dict) and q.get("question")]
+        existing_texts.extend(q["question"] for q in bank_picked if q.get("question"))
+        try:
+            generated = generate_questions(
+                role,
+                level,
+                interview_type,
+                need,
+                existing_texts,
+                required_skills,
+            )
+        except Exception:
+            log.exception("personalized question generation failed")
+            generated = []
+
+    selected = bank_picked + generated
+    if len(selected) < TOTAL_QUESTIONS:
+        selected = selected + FALLBACK_QUESTIONS[: TOTAL_QUESTIONS - len(selected)]
+    random.shuffle(selected)
+    return selected[:TOTAL_QUESTIONS]
+
+
 # ── LLM analysis ──────────────────────────────────────────────────────────────
 
 ALLOWED_INTENTS = ("answer", "clarification", "dont_know", "skip", "meta")
@@ -196,6 +255,7 @@ class AnswerEvaluation(BaseModel):
     strengths: list[str] = Field(default_factory=list)
     weaknesses: list[str] = Field(default_factory=list)
     category: str = "other"
+    skills_touched: list[str] = Field(default_factory=list)
 
 
 def _coerce_evaluation(value) -> AnswerEvaluation:
@@ -213,6 +273,20 @@ def _coerce_evaluation(value) -> AnswerEvaluation:
     return result
 
 
+def _filter_skills_touched(touched: list[str], canonical: list[str]) -> list[str]:
+    if not touched or not canonical:
+        return []
+    canon_lower = {s.lower(): s for s in canonical}
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in touched:
+        key = str(raw).strip().lower()
+        if key in canon_lower and canon_lower[key] not in seen:
+            out.append(canon_lower[key])
+            seen.add(canon_lower[key])
+    return out
+
+
 def analyze_answer_llm(
     role: str,
     level: str,
@@ -221,9 +295,12 @@ def analyze_answer_llm(
     hints: list[str],
     answer: str,
     clarifications_used: int,
+    required_skills: list[str] | None = None,
 ) -> AnswerEvaluation:
     template = load_prompt("analyzer")
     hints_text = ", ".join(hints) if hints else "(подсказок нет)"
+    skills = [s for s in (required_skills or []) if s]
+    skills_text = ", ".join(skills) if skills else "(не указаны)"
     prompt = template.format(
         role=role,
         level=level,
@@ -232,6 +309,7 @@ def analyze_answer_llm(
         hints=hints_text,
         answer=answer,
         clarifications_used=clarifications_used,
+        required_skills=skills_text,
     )
 
     model = get_chat_model(temperature=0.3)
@@ -258,6 +336,32 @@ def analyze_answer_llm(
 #   result = await graph.ainvoke({"node": "summary", "answers": answers, "scores": scores, ...})
 #   return result["summary"]
 
+def _compute_skills_coverage(
+    required_skills: list[str], scores: list[dict]
+) -> list[dict]:
+    if not required_skills:
+        return []
+    coverage: list[dict] = []
+    for skill in required_skills:
+        hits: list[int] = []
+        for score in scores:
+            touched = score.get("skills_touched") or []
+            if any(t.lower() == skill.lower() for t in touched) and score.get("score", 0) > 0:
+                hits.append(score["score"])
+        if hits:
+            avg = round(sum(hits) / len(hits), 1)
+        else:
+            avg = 0.0
+        coverage.append(
+            {
+                "skill": skill,
+                "questions_count": len(hits),
+                "avg_score": avg,
+            }
+        )
+    return coverage
+
+
 def mock_generate_summary(
     role: str,
     level: str,
@@ -265,6 +369,7 @@ def mock_generate_summary(
     questions: list[dict],
     answers: list[str],
     scores: list[dict],
+    required_skills: list[str] | None = None,
 ) -> dict:
     counted = [s["score"] for s in scores if s["score"] > 0]
     skipped_count = sum(1 for s in scores if s["score"] == 0)
@@ -305,6 +410,7 @@ def mock_generate_summary(
         "counted_count": len(counted),
         "recommendation": RECOMMENDATION_TEMPLATES[verdict],
         "per_question": scores,
+        "skills_coverage": _compute_skills_coverage(required_skills or [], scores),
     }
 
 
@@ -324,10 +430,18 @@ def save_session(session_id: str, data: dict) -> Path | None:
 # ── Button factories ──────────────────────────────────────────────────────────
 
 def make_role_actions() -> list[cl.Action]:
-    return [
+    actions = [
         cl.Action(name="select_role", label=role, payload={"value": role})
         for role in ROLES
     ]
+    actions.append(
+        cl.Action(
+            name="select_role_custom",
+            label="Другая роль…",
+            payload={"value": "custom"},
+        )
+    )
+    return actions
 
 
 def make_level_actions() -> list[cl.Action]:
@@ -354,6 +468,16 @@ def make_restart_action() -> list[cl.Action]:
     ]
 
 
+def make_skills_skip_action() -> list[cl.Action]:
+    return [
+        cl.Action(
+            name="skills_skip",
+            label="Пропустить (без фокуса на скиллах)",
+            payload={"value": "skip"},
+        )
+    ]
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _init_session():
@@ -369,6 +493,31 @@ def _init_session():
     cl.user_session.set("questions_db", load_questions_db())
     cl.user_session.set("clarifications_used", 0)
     cl.user_session.set("pending_dont_know", False)
+    cl.user_session.set("required_skills", [])
+    cl.user_session.set("is_custom_role", False)
+
+
+_MAX_SKILLS = 10
+_MAX_SKILL_LEN = 40
+_MAX_ROLE_LEN = 80
+
+
+def _parse_skills(raw: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for chunk in (raw or "").replace(";", ",").split(","):
+        s = chunk.strip()
+        if not s:
+            continue
+        s = s[:_MAX_SKILL_LEN]
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+        if len(out) >= _MAX_SKILLS:
+            break
+    return out
 
 
 TYPE_LABEL = {"technical": "Техническое", "hr": "HR / Поведенческое", "mixed": "Смешанное"}
@@ -415,6 +564,10 @@ async def on_message(message: cl.Message):
             content="Интервью завершено. Нажми **«Начать новое интервью»** выше, чтобы попробовать снова.",
             actions=make_restart_action(),
         ).send()
+    elif state == "await_custom_role":
+        await _handle_custom_role_input(message.content)
+    elif state == "await_skills":
+        await _handle_skills_input(message.content)
     else:
         # State is select_role / select_level / select_type — resend the relevant buttons
         await _resend_selection_prompt(state)
@@ -436,6 +589,35 @@ async def _resend_selection_prompt(state: str):
             content="Пожалуйста, **выбери тип интервью** с помощью кнопок:",
             actions=make_type_actions(),
         ).send()
+
+
+async def _handle_custom_role_input(text: str):
+    role = (text or "").strip()
+    if len(role) < 3:
+        await cl.Message(
+            content="Слишком короткое название. Введи должность хотя бы из 3 символов (например: `Middle DevOps Engineer`)."
+        ).send()
+        return
+    role = role[:_MAX_ROLE_LEN]
+    cl.user_session.set("role", role)
+    cl.user_session.set("is_custom_role", True)
+    cl.user_session.set("state", "select_level")
+    await cl.Message(
+        content=f"Роль: **{role}** ✓\n\nТеперь выбери уровень опыта:",
+        actions=make_level_actions(),
+    ).send()
+
+
+async def _handle_skills_input(text: str):
+    skills = _parse_skills(text)
+    cl.user_session.set("required_skills", skills)
+    if skills:
+        await cl.Message(
+            content="Навыки: **" + ", ".join(skills) + "** ✓"
+        ).send()
+    else:
+        await cl.Message(content="Не распознал навыки — поедем без специфичного фокуса.").send()
+    await _start_interview()
 
 
 @cl.action_callback("select_role")
@@ -462,28 +644,86 @@ async def on_select_level(action: cl.Action):
     ).send()
 
 
+@cl.action_callback("select_role_custom")
+async def on_select_role_custom(action: cl.Action):
+    cl.user_session.set("state", "await_custom_role")
+    await action.remove()
+    await cl.Message(
+        content=(
+            "Окей, введи название должности текстом — например: "
+            "`Middle DevOps Engineer`, `Senior Data Engineer`, `Junior QA Automation`."
+        )
+    ).send()
+
+
 @cl.action_callback("select_type")
 async def on_select_type(action: cl.Action):
+    interview_type = action.payload["value"]
+    cl.user_session.set("interview_type", interview_type)
+    cl.user_session.set("state", "await_skills")
+    await action.remove()
+    await cl.Message(
+        content=(
+            f"Тип: **{INTERVIEW_TYPES[interview_type]}** ✓\n\n"
+            "На каких **навыках/инструментах** сделать акцент? "
+            "Перечисли через запятую (например: `Docker, Kubernetes, Terraform, AWS`).\n\n"
+            "Или нажми кнопку ниже, чтобы пройти стандартное интервью без фокуса."
+        ),
+        actions=make_skills_skip_action(),
+    ).send()
+
+
+@cl.action_callback("skills_skip")
+async def on_skills_skip(action: cl.Action):
+    cl.user_session.set("required_skills", [])
+    await action.remove()
+    await _start_interview()
+
+
+async def _start_interview():
     role = cl.user_session.get("role")
     level = cl.user_session.get("level")
-    interview_type = action.payload["value"]
+    interview_type = cl.user_session.get("interview_type")
+    required_skills: list[str] = cl.user_session.get("required_skills") or []
+    is_custom_role: bool = bool(cl.user_session.get("is_custom_role"))
     db = cl.user_session.get("questions_db")
 
-    cl.user_session.set("interview_type", interview_type)
-    questions = get_questions(db, role, level, interview_type)
+    needs_llm = bool(required_skills) or is_custom_role
+    if needs_llm:
+        async with cl.Step(name="Генерирую персонализированные вопросы…", type="tool") as step:
+            questions = await asyncio.to_thread(
+                get_personalized_questions,
+                db,
+                role,
+                level,
+                interview_type,
+                required_skills,
+                is_custom_role,
+            )
+            step.output = f"подготовлено {len(questions)} вопросов"
+    else:
+        questions = get_personalized_questions(
+            db, role, level, interview_type, required_skills, is_custom_role
+        )
+
     cl.user_session.set("questions", questions)
     cl.user_session.set("question_num", 0)
     cl.user_session.set("answers", [])
     cl.user_session.set("scores", [])
     cl.user_session.set("state", "in_interview")
 
-    await action.remove()
+    skills_line = (
+        f"- Навыки в фокусе: **{', '.join(required_skills)}**\n"
+        if required_skills
+        else ""
+    )
     await cl.Message(
         content=(
             f"**Параметры интервью**\n\n"
             f"- Роль: **{role}**\n"
             f"- Уровень: **{level}**\n"
-            f"- Тип: **{INTERVIEW_TYPES[interview_type]}**\n\n"
+            f"- Тип: **{INTERVIEW_TYPES[interview_type]}**\n"
+            f"{skills_line}\n"
             f"Будет **{TOTAL_QUESTIONS} вопросов**. После каждого ответа — мгновенный фидбэк.\n\n"
             "Отвечай развёрнуто, как на настоящем интервью. Поехали! 🚀"
         )
@@ -491,17 +731,19 @@ async def on_select_type(action: cl.Action):
 
     await _ask_next_question()
 
-    existing_texts = [
-        q["question"]
-        for q in db.get("roles", {})
-                   .get(role, {})
-                   .get(level, {})
-                   .get(interview_type, [])
-        if isinstance(q, dict) and q.get("question")
-    ]
-    asyncio.create_task(
-        _enrich_bank_async(role, level, interview_type, existing_texts)
-    )
+    # Background bank enrichment only for the standard combos (no skills, known role).
+    if not required_skills and not is_custom_role:
+        existing_texts = [
+            q["question"]
+            for q in db.get("roles", {})
+                       .get(role, {})
+                       .get(level, {})
+                       .get(interview_type, [])
+            if isinstance(q, dict) and q.get("question")
+        ]
+        asyncio.create_task(
+            _enrich_bank_async(role, level, interview_type, existing_texts)
+        )
 
 
 @cl.action_callback("restart")
@@ -551,6 +793,7 @@ async def _handle_answer(answer_text: str):
     level = cl.user_session.get("level")
     interview_type = cl.user_session.get("interview_type")
     clarifications_used = cl.user_session.get("clarifications_used") or 0
+    required_skills: list[str] = cl.user_session.get("required_skills") or []
 
     try:
         async with cl.Step(name="Анализ ответа", type="tool") as step:
@@ -562,6 +805,10 @@ async def _handle_answer(answer_text: str):
                 hints=question.get("hints", []),
                 answer=answer_text,
                 clarifications_used=clarifications_used,
+                required_skills=required_skills,
+            )
+            analysis.skills_touched = _filter_skills_touched(
+                analysis.skills_touched, required_skills
             )
             if analysis.score is not None:
                 _, emoji, label = verdict_for_score(analysis.score)
@@ -638,6 +885,7 @@ async def _record_and_advance(
             "weaknesses": analysis.weaknesses,
             "category": analysis.category,
             "intent": analysis.intent,
+            "skills_touched": list(analysis.skills_touched or []),
             "question_id": question.get("id", ""),
         }
     )
@@ -667,12 +915,13 @@ async def _finish_interview():
     answers = cl.user_session.get("answers")
     scores = cl.user_session.get("scores")
     session_id = cl.user_session.get("session_id")
+    required_skills: list[str] = cl.user_session.get("required_skills") or []
 
     await cl.Message(content="Интервью завершено! Формирую отчёт...").send()
 
     async with cl.Step(name="Генерация итогового отчёта", type="tool") as step:
         summary = mock_generate_summary(
-            role, level, interview_type, questions, answers, scores
+            role, level, interview_type, questions, answers, scores, required_skills
         )
         step.output = (
             f"Итог: {summary['total_score']}/{summary['max_possible']} "
@@ -713,13 +962,34 @@ async def _finish_interview():
         if summary["skipped_count"] > 0:
             result_line += f"\n\n_Учтено {summary['counted_count']} ответов из {len(scores)} (пропущено: {summary['skipped_count']})_"
 
+    skills_header = (
+        f" | **Навыки:** {', '.join(required_skills)}" if required_skills else ""
+    )
+
+    skills_section = ""
+    if summary.get("skills_coverage"):
+        coverage_lines = []
+        for entry in summary["skills_coverage"]:
+            if entry["questions_count"] == 0:
+                coverage_lines.append(
+                    f"- **{entry['skill']}** — не раскрыт в ответах ⚠️"
+                )
+            else:
+                _, e, _ = verdict_for_score(int(round(entry["avg_score"])))
+                coverage_lines.append(
+                    f"- **{entry['skill']}** — {e} {entry['avg_score']}/10 "
+                    f"(вопросов: {entry['questions_count']})"
+                )
+        skills_section = "### Покрытие навыков\n" + "\n".join(coverage_lines) + "\n\n"
+
     report = (
         f"## Итоговый отчёт по интервью\n\n"
-        f"**Роль:** {role} | **Уровень:** {level} | **Тип:** {type_label}\n\n"
+        f"**Роль:** {role} | **Уровень:** {level} | **Тип:** {type_label}{skills_header}\n\n"
         f"---\n\n"
         f"{result_line}\n\n"
         f"### Сильные стороны\n{strengths_text}\n\n"
         f"### Над чем поработать\n{improvements_text}\n\n"
+        f"{skills_section}"
         f"### По вопросам\n{per_q_text}\n\n"
         f"---\n\n"
         f"### Рекомендация\n{summary['recommendation']}\n\n"
@@ -743,6 +1013,7 @@ async def _finish_interview():
             "strengths": scores[i].get("strengths", []),
             "weaknesses": scores[i].get("weaknesses", []),
             "category": scores[i].get("category", "other"),
+            "skills_touched": scores[i].get("skills_touched", []),
         }
         for i, q in enumerate(questions)
         if i < len(scores)
@@ -754,6 +1025,8 @@ async def _finish_interview():
         "role": role,
         "level": level,
         "interview_type": interview_type,
+        "is_custom_role": bool(cl.user_session.get("is_custom_role")),
+        "required_skills": required_skills,
         "summary": {
             "avg_score": summary["avg_score"],
             "total_score": summary["total_score"],
@@ -763,6 +1036,7 @@ async def _finish_interview():
             "strengths": summary["strengths"],
             "improvements": summary["improvements"],
             "recommendation": summary["recommendation"],
+            "skills_coverage": summary.get("skills_coverage", []),
         },
         "qa_pairs": qa_pairs,
     }

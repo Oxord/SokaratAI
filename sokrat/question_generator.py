@@ -59,6 +59,7 @@ def generate_questions(
     interview_type: str,
     count: int,
     existing: list[str],
+    required_skills: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     if count <= 0:
         return []
@@ -70,12 +71,15 @@ def generate_questions(
         if existing_tail
         else "(вопросов пока нет)"
     )
+    skills = [s for s in (required_skills or []) if s]
+    skills_text = ", ".join(skills) if skills else "(не указаны — обычные вопросы по роли)"
     prompt = template.format(
         role=role,
         level=level,
         interview_type=interview_type,
         count=count,
         existing=existing_text,
+        required_skills=skills_text,
     )
 
     try:

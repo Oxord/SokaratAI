@@ -4,6 +4,7 @@
 - роль: {role}
 - уровень: {level}
 - тип интервью: {interview_type}
+- требуемые навыки/инструменты: {required_skills}
 
 Текущий вопрос интервьюера:
 """{question}"""
@@ -48,6 +49,7 @@
 - strengths: список конкретных пунктов, что в ответе хорошо (может быть пустым для слабых ответов)
 - weaknesses: список конкретных пунктов, что упущено или ошибочно
 - category: одно из fundamentals, system_design, coding, debugging, soft_skills, motivation, behavioral, other
+- skills_touched: если в контексте `требуемые навыки` указан непустой список — выбери из него те навыки, которые пользователь действительно продемонстрировал в этом ответе (упомянул по делу, объяснил, привёл пример). Используй ТОЛЬКО формулировки из исходного списка навыков, не придумывай новые. Если требуемые навыки не указаны или ни один не раскрыт — пустой массив.
 - explanation: null
 
 ═══ Если intent = "clarification" ═══
@@ -96,5 +98,6 @@
   "explanation": <строка или null>,
   "strengths": [<строки>],
   "weaknesses": [<строки>],
-  "category": "<fundamentals|system_design|coding|debugging|soft_skills|motivation|behavioral|other>"
+  "category": "<fundamentals|system_design|coding|debugging|soft_skills|motivation|behavioral|other>",
+  "skills_touched": [<строки из исходного списка требуемых навыков, либо []>]
 }}
