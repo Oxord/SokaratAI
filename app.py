@@ -24,8 +24,76 @@ load_dotenv()
 
 SESSION_DIR = Path(os.getenv("SESSION_DIR", "data/sessions"))
 QUESTIONS_PATH = Path(os.getenv("QUESTIONS_PATH", "data/questions.json"))
-TOTAL_QUESTIONS = 7
 BANK_REFRESH_PER_SESSION = 2
+
+# Adaptive interview length: base bounds per level + extra capacity per required skill.
+# A run will ask at least `min_q` questions and at most `max_q`; in between, it stops
+# once competence signal is clear (see should_stop_interview).
+_LEVEL_BOUNDS: dict[str, tuple[int, int]] = {
+    "Junior": (6, 10),
+    "Middle": (8, 14),
+    "Senior": (10, 18),
+}
+# Фиксированные границы для явно выбранных режимов (quick / full).
+# Для "medium" границы не заданы — используется адаптивная логика по уровню/скиллам.
+_MODE_BOUNDS: dict[str, tuple[int, int]] = {
+    "quick": (4, 6),
+    "full":  (14, 20),
+}
+_PER_SKILL_MIN = 1
+_PER_SKILL_MAX = 2
+_HARD_MAX = 20
+# Each required skill must collect at least this many scored answers before
+# we consider the skill "covered" for early stopping.
+_MIN_HITS_PER_SKILL = 2
+# When no skills are specified, stop early after this many consecutive answers
+# in the same band (all strong or all weak) — the signal is already clear.
+_STABLE_RUN = 3
+
+
+def compute_bounds(level: str | None, num_skills: int, mode: str | None = None) -> tuple[int, int]:
+    if mode in _MODE_BOUNDS:
+        min_q, max_q = _MODE_BOUNDS[mode]
+        return min_q, min(_HARD_MAX, max_q)
+    base_min, base_max = _LEVEL_BOUNDS.get(level or "", _LEVEL_BOUNDS["Middle"])
+    extra = max(0, num_skills)
+    min_q = base_min + extra * _PER_SKILL_MIN
+    max_q = min(_HARD_MAX, base_max + extra * _PER_SKILL_MAX)
+    if min_q > max_q:
+        min_q = max_q
+    return min_q, max_q
+
+
+def should_stop_interview(
+    asked: int,
+    min_q: int,
+    max_q: int,
+    scores: list[dict],
+    required_skills: list[str],
+) -> bool:
+    if asked >= max_q:
+        return True
+    if asked < min_q:
+        return False
+
+    if required_skills:
+        # Stop only when every skill has been probed enough times with a real answer.
+        hits: dict[str, int] = {s.lower(): 0 for s in required_skills}
+        for s in scores:
+            if s.get("score", 0) <= 0:
+                continue
+            for t in s.get("skills_touched") or []:
+                key = str(t).lower()
+                if key in hits:
+                    hits[key] += 1
+        return all(count >= _MIN_HITS_PER_SKILL for count in hits.values())
+
+    # No explicit skills → stop early if signal is already consistent.
+    nonzero = [s["score"] for s in scores if s.get("score", 0) > 0]
+    if len(nonzero) < _STABLE_RUN:
+        return False
+    tail = nonzero[-_STABLE_RUN:]
+    return all(v >= 8 for v in tail) or all(v <= 3 for v in tail)
 
 _BANK_LOCK = threading.Lock()
 
@@ -35,6 +103,12 @@ INTERVIEW_TYPES = {
     "technical": "Техническое (стек, фреймворки, инструменты)",
     "hr": "HR / Поведенческое (STAR, мотивация, конфликты)",
     "mixed": "Смешанное (технические + HR вопросы)",
+}
+
+INTERVIEW_MODES = {
+    "quick":  ("Быстрое",  "4–6 вопросов, поверхностный прогон"),
+    "medium": ("Среднее",  "адаптивно под уровень и скиллы (6–18)"),
+    "full":   ("Полное",   "14–20 вопросов, глубокий разбор"),
 }
 
 RECOMMENDATION_TEMPLATES = {
@@ -165,17 +239,17 @@ async def _enrich_bank_async(
         log.exception("bank enrichment failed (best-effort, ignored)")
 
 
-def get_questions(db: dict, role: str, level: str, interview_type: str) -> list[dict]:
+def get_questions(db: dict, role: str, level: str, interview_type: str, count: int) -> list[dict]:
     try:
         pool = db["roles"][role][level][interview_type]
     except KeyError:
         pool = []
 
-    if len(pool) < TOTAL_QUESTIONS:
+    if len(pool) < count:
         pool = pool + FALLBACK_QUESTIONS
-        pool = pool[:TOTAL_QUESTIONS]
+        pool = pool[:count]
 
-    selected = random.sample(pool, min(TOTAL_QUESTIONS, len(pool)))
+    selected = random.sample(pool, min(count, len(pool)))
     return selected
 
 
@@ -193,26 +267,31 @@ def get_personalized_questions(
     interview_type: str,
     required_skills: list[str],
     is_custom_role: bool,
+    count: int,
 ) -> list[dict]:
-    """Build the 7-question set for a session.
+    """Build a pool of `count` questions for a session.
 
     No skills + standard role → existing fast path (bank + fallback).
     Custom role or skills specified → mix of bank picks and skill-targeted
     LLM questions, generated synchronously so the interview can start.
     Skill-specific questions are NOT persisted to the bank.
+
+    The interview may consume fewer than `count` questions if the dynamic
+    stop condition fires earlier; we still pre-build the full pool so we
+    never run out mid-interview.
     """
     if not required_skills and not is_custom_role:
-        return get_questions(db, role, level, interview_type)
+        return get_questions(db, role, level, interview_type, count)
 
     bank_pool = _bank_pool(db, role, level, interview_type)
 
     if required_skills:
-        bank_take = min(len(bank_pool), 2)
+        bank_take = min(len(bank_pool), max(1, count // 4))
     else:
-        bank_take = min(len(bank_pool), TOTAL_QUESTIONS)
+        bank_take = min(len(bank_pool), count)
 
     bank_picked = random.sample(bank_pool, bank_take) if bank_take else []
-    need = TOTAL_QUESTIONS - len(bank_picked)
+    need = count - len(bank_picked)
 
     generated: list[dict] = []
     if need > 0:
@@ -232,10 +311,10 @@ def get_personalized_questions(
             generated = []
 
     selected = bank_picked + generated
-    if len(selected) < TOTAL_QUESTIONS:
-        selected = selected + FALLBACK_QUESTIONS[: TOTAL_QUESTIONS - len(selected)]
+    if len(selected) < count:
+        selected = selected + FALLBACK_QUESTIONS[: count - len(selected)]
     random.shuffle(selected)
-    return selected[:TOTAL_QUESTIONS]
+    return selected[:count]
 
 
 # ── LLM analysis ──────────────────────────────────────────────────────────────
@@ -458,6 +537,17 @@ def make_type_actions() -> list[cl.Action]:
     ]
 
 
+def make_mode_actions() -> list[cl.Action]:
+    return [
+        cl.Action(
+            name="select_mode",
+            label=f"{label} — {hint}",
+            payload={"value": key},
+        )
+        for key, (label, hint) in INTERVIEW_MODES.items()
+    ]
+
+
 def make_restart_action() -> list[cl.Action]:
     return [
         cl.Action(
@@ -486,6 +576,7 @@ def _init_session():
     cl.user_session.set("role", None)
     cl.user_session.set("level", None)
     cl.user_session.set("interview_type", None)
+    cl.user_session.set("interview_mode", None)
     cl.user_session.set("question_num", 0)
     cl.user_session.set("questions", [])
     cl.user_session.set("answers", [])
@@ -495,6 +586,8 @@ def _init_session():
     cl.user_session.set("pending_dont_know", False)
     cl.user_session.set("required_skills", [])
     cl.user_session.set("is_custom_role", False)
+    cl.user_session.set("min_q", 0)
+    cl.user_session.set("max_q", 0)
 
 
 _MAX_SKILLS = 10
@@ -544,8 +637,10 @@ async def on_chat_start():
         content=(
             "## Привет! Я **Сократ** 👋\n\n"
             "Твой AI-тренер для подготовки к собеседованиям.\n\n"
-            "Я проведу mock-интервью из **7 вопросов**, дам мгновенный фидбэк "
-            "после каждого ответа и сформирую итоговый отчёт с рекомендациями.\n\n"
+            "Я проведу адаптивное mock-интервью: число вопросов подберётся "
+            "под твой уровень и набор навыков, чтобы реально оценить "
+            "компетенции, а не просто «отбить квоту». После каждого ответа — "
+            "мгновенный фидбэк, в конце — итоговый отчёт с рекомендациями.\n\n"
             "---\n\n"
             "**С чего начнём?** Выбери целевую роль:"
         ),
@@ -588,6 +683,11 @@ async def _resend_selection_prompt(state: str):
         await cl.Message(
             content="Пожалуйста, **выбери тип интервью** с помощью кнопок:",
             actions=make_type_actions(),
+        ).send()
+    elif state == "select_mode":
+        await cl.Message(
+            content="Пожалуйста, **выбери режим интервью** с помощью кнопок:",
+            actions=make_mode_actions(),
         ).send()
 
 
@@ -660,11 +760,27 @@ async def on_select_role_custom(action: cl.Action):
 async def on_select_type(action: cl.Action):
     interview_type = action.payload["value"]
     cl.user_session.set("interview_type", interview_type)
-    cl.user_session.set("state", "await_skills")
+    cl.user_session.set("state", "select_mode")
     await action.remove()
     await cl.Message(
         content=(
             f"Тип: **{INTERVIEW_TYPES[interview_type]}** ✓\n\n"
+            "Выбери **режим интервью** — насколько подробно проходим:"
+        ),
+        actions=make_mode_actions(),
+    ).send()
+
+
+@cl.action_callback("select_mode")
+async def on_select_mode(action: cl.Action):
+    mode = action.payload["value"]
+    cl.user_session.set("interview_mode", mode)
+    cl.user_session.set("state", "await_skills")
+    await action.remove()
+    label, _ = INTERVIEW_MODES[mode]
+    await cl.Message(
+        content=(
+            f"Режим: **{label}** ✓\n\n"
             "На каких **навыках/инструментах** сделать акцент? "
             "Перечисли через запятую (например: `Docker, Kubernetes, Terraform, AWS`).\n\n"
             "Или нажми кнопку ниже, чтобы пройти стандартное интервью без фокуса."
@@ -688,6 +804,11 @@ async def _start_interview():
     is_custom_role: bool = bool(cl.user_session.get("is_custom_role"))
     db = cl.user_session.get("questions_db")
 
+    mode = cl.user_session.get("interview_mode")
+    min_q, max_q = compute_bounds(level, len(required_skills), mode)
+    cl.user_session.set("min_q", min_q)
+    cl.user_session.set("max_q", max_q)
+
     needs_llm = bool(required_skills) or is_custom_role
     if needs_llm:
         async with cl.Step(name="Генерирую персонализированные вопросы…", type="tool") as step:
@@ -699,11 +820,12 @@ async def _start_interview():
                 interview_type,
                 required_skills,
                 is_custom_role,
+                max_q,
             )
             step.output = f"подготовлено {len(questions)} вопросов"
     else:
         questions = get_personalized_questions(
-            db, role, level, interview_type, required_skills, is_custom_role
+            db, role, level, interview_type, required_skills, is_custom_role, max_q
         )
 
     cl.user_session.set("questions", questions)
@@ -717,6 +839,18 @@ async def _start_interview():
         if required_skills
         else ""
     )
+    if required_skills:
+        length_explanation = (
+            f"Интервью адаптивное: **от {min_q} до {max_q} вопросов**. "
+            f"Закончим, когда каждый из навыков получит достаточно ответов "
+            f"для уверенной оценки (или дойдём до верхней границы)."
+        )
+    else:
+        length_explanation = (
+            f"Интервью адаптивное: **от {min_q} до {max_q} вопросов**. "
+            f"Закончим раньше, если уровень станет очевиден по нескольким "
+            f"подряд идущим ответам."
+        )
     await cl.Message(
         content=(
             f"**Параметры интервью**\n\n"
@@ -724,7 +858,7 @@ async def _start_interview():
             f"- Уровень: **{level}**\n"
             f"- Тип: **{INTERVIEW_TYPES[interview_type]}**\n"
             f"{skills_line}\n"
-            f"Будет **{TOTAL_QUESTIONS} вопросов**. После каждого ответа — мгновенный фидбэк.\n\n"
+            f"{length_explanation} После каждого ответа — мгновенный фидбэк.\n\n"
             "Отвечай развёрнуто, как на настоящем интервью. Поехали! 🚀"
         )
     ).send()
@@ -764,8 +898,13 @@ async def on_restart(action: cl.Action):
 async def _ask_next_question():
     question_num = cl.user_session.get("question_num")
     questions = cl.user_session.get("questions")
+    min_q = cl.user_session.get("min_q") or 0
+    max_q = cl.user_session.get("max_q") or len(questions)
+    scores = cl.user_session.get("scores") or []
+    required_skills: list[str] = cl.user_session.get("required_skills") or []
 
-    if question_num >= len(questions):
+    if should_stop_interview(question_num, min_q, max_q, scores, required_skills) \
+            or question_num >= len(questions):
         await _finish_interview()
         return
 
@@ -775,7 +914,8 @@ async def _ask_next_question():
 
     await cl.Message(
         content=(
-            f"**Вопрос {question_num + 1} из {TOTAL_QUESTIONS}** _{type_tag}_\n\n"
+            f"**Вопрос {question_num + 1}** "
+            f"_(минимум {min_q}, максимум {max_q} · {type_tag})_\n\n"
             f"{q['question']}"
         )
     ).send()
@@ -1025,6 +1165,7 @@ async def _finish_interview():
         "role": role,
         "level": level,
         "interview_type": interview_type,
+        "interview_mode": cl.user_session.get("interview_mode"),
         "is_custom_role": bool(cl.user_session.get("is_custom_role")),
         "required_skills": required_skills,
         "summary": {
