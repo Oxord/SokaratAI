@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+sokrat/data/sessions/*.json
+!sokrat/data/sessions/.gitkeep
+.idea/
+.vscode/
+.DS_Store
+
+# Локальная конфигурация Claude Code (субагенты и слэш-команды)
+agents/
+commands/
