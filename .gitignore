@@ -9,7 +9,6 @@ sokrat/data/sessions/*.json
 .idea/
 .vscode/
 .DS_Store
-
-# Локальная конфигурация Claude Code (субагенты и слэш-команды)
-agents/
-commands/
+data/sessions/
+.chainlit/
+*.egg-info/
