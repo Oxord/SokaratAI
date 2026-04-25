@@ -1,6 +1,9 @@
+import asyncio
 import json
+import logging
 import os
 import random
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,12 +16,18 @@ from pydantic import BaseModel, Field, ValidationError
 
 from sokrat.llm import get_chat_model
 from sokrat.prompts import load_prompt
+from sokrat.question_generator import generate_questions
+
+log = logging.getLogger(__name__)
 
 load_dotenv()
 
 SESSION_DIR = Path(os.getenv("SESSION_DIR", "data/sessions"))
 QUESTIONS_PATH = Path(os.getenv("QUESTIONS_PATH", "data/questions.json"))
 TOTAL_QUESTIONS = 7
+BANK_REFRESH_PER_SESSION = 2
+
+_BANK_LOCK = threading.Lock()
 
 ROLES = ["Python Developer", "Frontend Developer", "Product Manager"]
 LEVELS = ["Junior", "Middle", "Senior"]
@@ -100,6 +109,60 @@ def load_questions_db() -> dict:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+        raise
+
+
+def _append_questions_to_bank(
+    role: str, level: str, interview_type: str, items: list[dict]
+) -> None:
+    if not items:
+        return
+    with _BANK_LOCK:
+        db = load_questions_db()
+        roles = db.setdefault("roles", {})
+        role_dict = roles.setdefault(role, {})
+        level_dict = role_dict.setdefault(level, {})
+        bucket = level_dict.setdefault(interview_type, [])
+        bucket.extend(items)
+        _atomic_write_json(QUESTIONS_PATH, db)
+
+
+async def _enrich_bank_async(
+    role: str, level: str, interview_type: str, existing_texts: list[str]
+) -> None:
+    try:
+        new_items = await asyncio.to_thread(
+            generate_questions,
+            role,
+            level,
+            interview_type,
+            BANK_REFRESH_PER_SESSION,
+            existing_texts,
+        )
+        if new_items:
+            await asyncio.to_thread(
+                _append_questions_to_bank, role, level, interview_type, new_items
+            )
+            log.info(
+                "bank enriched: role=%s level=%s type=%s added=%d",
+                role, level, interview_type, len(new_items),
+            )
+    except Exception:
+        log.exception("bank enrichment failed (best-effort, ignored)")
 
 
 def get_questions(db: dict, role: str, level: str, interview_type: str) -> list[dict]:
@@ -427,6 +490,18 @@ async def on_select_type(action: cl.Action):
     ).send()
 
     await _ask_next_question()
+
+    existing_texts = [
+        q["question"]
+        for q in db.get("roles", {})
+                   .get(role, {})
+                   .get(level, {})
+                   .get(interview_type, [])
+        if isinstance(q, dict) and q.get("question")
+    ]
+    asyncio.create_task(
+        _enrich_bank_async(role, level, interview_type, existing_texts)
+    )
 
 
 @cl.action_callback("restart")
