@@ -6,6 +6,7 @@ import random
 import threading
 import time
 import uuid
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote_plus
 
@@ -614,7 +615,7 @@ def _init_session():
     cl.user_session.set("is_custom_role", False)
     cl.user_session.set("min_q", 0)
     cl.user_session.set("max_q", 0)
-    cl.user_session.set("audio_chunks", [])
+    cl.user_session.set("audio_buffer", None)
     cl.user_session.set("question_started_at", None)
     cl.user_session.set("question_timer_msg", None)
     cl.user_session.set("question_timer_task", None)
@@ -1519,28 +1520,33 @@ async def on_audio_start() -> bool:
             )
         ).send()
         return False
-    cl.user_session.set("audio_chunks", [])
+    cl.user_session.set("audio_buffer", None)
     return True
 
 
 @cl.on_audio_chunk
 async def on_audio_chunk(chunk: cl.InputAudioChunk) -> None:
-    chunks: list[bytes] = cl.user_session.get("audio_chunks") or []
-    if getattr(chunk, "isStart", False):
-        chunks = []
-    chunks.append(chunk.data)
-    cl.user_session.set("audio_chunks", chunks)
+    # Chainlit 2.x dispatches each chunk via asyncio.create_task without
+    # awaiting, so the previous list-replace pattern (`get → append → set`)
+    # was racy and on_audio_end could observe an empty list. The fix is the
+    # official cookbook pattern: a single BytesIO created on isStart and
+    # mutated in place by every subsequent chunk.
+    buffer: BytesIO | None = cl.user_session.get("audio_buffer")
+    if getattr(chunk, "isStart", False) or buffer is None:
+        buffer = BytesIO()
+        cl.user_session.set("audio_buffer", buffer)
+        cl.user_session.set("audio_mime_type", getattr(chunk, "mimeType", ""))
+    buffer.write(chunk.data)
 
 
 @cl.on_audio_end
 async def on_audio_end(*_args, **_kwargs) -> None:
-    chunks: list[bytes] = cl.user_session.get("audio_chunks") or []
-    cl.user_session.set("audio_chunks", [])
-    if not chunks:
+    buffer: BytesIO | None = cl.user_session.get("audio_buffer")
+    cl.user_session.set("audio_buffer", None)
+    audio_bytes = buffer.getvalue() if buffer is not None else b""
+    if not audio_bytes:
         await cl.Message(content="Пустая запись — попробуй ещё раз.").send()
         return
-
-    audio_bytes = b"".join(chunks)
 
     client = get_stt_client()
     if client is None:
