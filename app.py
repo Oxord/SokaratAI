@@ -35,6 +35,13 @@ from sokrat.resume_parser import (
 from sokrat.resource_generator import generate_resources
 from sokrat.role_classifier import classify_role
 from sokrat.stt import SaluteSpeechError, get_stt_client
+from sokrat.star_analysis import (
+    STAR_PARTS as STAR_LABELS,
+    aggregate_star,
+    analyze_star,
+    format_star_block,
+    is_behavioral,
+)
 from sokrat.summary_builder import compute_summary
 from sokrat.vacancy_parser import VacancyContext, VacancyParseError, extract_vacancy_context
 
@@ -1524,9 +1531,24 @@ async def _record_and_advance(
     cl.user_session.set("question_timer_msg", None)
     cl.user_session.set("question_started_at", None)
 
+    star_result = None
+    if (
+        score_override > 0
+        and analysis.intent == "answer"
+        and is_behavioral(analysis.category, question.get("question", ""))
+    ):
+        star_result = await asyncio.to_thread(
+            analyze_star,
+            question.get("question", ""),
+            answer_text,
+            cl.user_session.get("level") or "",
+            cl.user_session.get("role") or "",
+        )
+
     answers.append(answer_text)
     scores.append(
         {
+            "star": star_result.to_dict() if star_result else None,
             "score": score_override,
             "verdict": label,
             "feedback": analysis.feedback,
@@ -1564,6 +1586,9 @@ async def _record_and_advance(
 
     message = f"{header}\n\n---\n\n{analysis.feedback}\n\n{time_line}"
     await cl.Message(content=message).send()
+
+    if star_result:
+        await cl.Message(content=format_star_block(star_result.to_dict())).send()
 
     # Если ответ слабый/пропущен/«не знаю» — показываем эталонный ответ как карточку (blockquote).
     if analysis.ideal_answer and (score_override < 6):
@@ -1619,6 +1644,7 @@ async def _finish_interview():
             log.exception("resource generation failed (best-effort, ignored)")
             resources = []
     summary["resources"] = resources
+    summary["star"] = aggregate_star(scores)
     gap_analysis: GapAnalysis | None = cl.user_session.get("gap_analysis")
     if cl.user_session.get("job_context") or gap_analysis:
         summary["readiness"] = compute_readiness(summary, gap_analysis)
@@ -1673,6 +1699,19 @@ async def _finish_interview():
         ]
         dimensions_section = (
             "### 📊 Профиль интервью\n" + "\n".join(dimension_lines) + "\n\n"
+        )
+
+    star_section = ""
+    star_summary = summary.get("star")
+    if star_summary:
+        missed = star_summary.get("most_missed")
+        missed_line = (
+            f"\n- Чаще всего не хватает: **{STAR_LABELS[missed]}**" if missed in STAR_LABELS else ""
+        )
+        star_section = (
+            "### 🧩 Поведенческие ответы (STAR)\n"
+            f"- Полнота структуры: **{star_summary['avg_completeness_pct']:g}%** "
+            f"(ответов: {star_summary['answers_count']}){missed_line}\n\n"
         )
 
     pace_section = ""
@@ -1751,6 +1790,7 @@ async def _finish_interview():
     report = (
         f"{dimensions_section}"
         f"{pace_section}"
+        f"{star_section}"
         f"### ✅ Сильные стороны\n{strengths_text}\n\n"
         f"### 🛠 Над чем поработать\n{improvements_text}\n\n"
         f"{skills_section}"
