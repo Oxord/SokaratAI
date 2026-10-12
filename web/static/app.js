@@ -550,7 +550,13 @@
 
     let current = q, startedAt = Date.now(), busy = false;
 
-    function scrollDown() { window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); }
+    // Прокрутка к новому сообщению так, чтобы оно целиком было над панелью ввода.
+    function scrollDown(el) {
+      const target = el || thread.lastElementChild;
+      if (!target) return;
+      target.style.scrollMarginBottom = `${composer.offsetHeight + 20}px`;
+      requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'end' }));
+    }
     function setBusy(v) { busy = v; for (const b of [sendBtn, skipBtn, finishBtn, micBtn]) if (b) b.disabled = v; ta.disabled = v; }
 
     function showQuestion(question) {
@@ -558,11 +564,12 @@
       startedAt = Date.now();
       counter.textContent = `Вопрос ${question.number} из ${question.max}`;
       bar.style.width = `${Math.min(100, Math.round(((question.number - 1) / question.max) * 100))}%`;
-      thread.append(h('div', { class: 'msg' },
+      const qMsg = h('div', { class: 'msg' },
         h('div', { class: 'avatar' }, h('img', { src: '/static/mascot.png', alt: '' })),
         h('div', { class: 'bubble-msg' },
           h('div', { class: 'q-head' }, `Вопрос ${question.number}`, ' · ', question.type_label),
-          h('div', { class: 'q-text' }, question.text))));
+          h('div', { class: 'q-text' }, question.text)));
+      thread.append(qMsg);
       if (S.config.tts) speak(question.text);
       stopTimer();
       timer.classList.remove('over');
@@ -575,7 +582,7 @@
           timer.textContent = fmtClock(sec);
         }
       }, 500);
-      scrollDown();
+      scrollDown(qMsg);
     }
 
     function addUser(text) {
@@ -644,6 +651,9 @@
     if (micBtn) micBtn.addEventListener('click', () => toggleRecording(micBtn, ta));
 
     page(h('div', { class: 'container interview narrow' }, topBar, thread), composer);
+    const syncPad = () => document.documentElement.style.setProperty('--composer-h', `${composer.offsetHeight}px`);
+    syncPad();
+    if (window.ResizeObserver) new ResizeObserver(syncPad).observe(composer);
     showQuestion(q);
     ta.focus();
   }
