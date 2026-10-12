@@ -12,7 +12,9 @@
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('sokrat/nodes/analyzer.py'\\).read\\(\\)\\); print\\('analyzer.py OK'\\)\")",
       "Bash(ps -p 7442 -o pid,command)",
       "Bash(ps -p 7444 -o pid,command)",
-      "Bash(pkill -f \"chainlit run app.py\")"
+      "Bash(pkill -f \"chainlit run app.py\")",
+      "Bash(python -c \"import ast; tree = ast.parse\\(open\\('app.py'\\).read\\(\\)\\); print\\('OK: app.py parsed'\\)\")",
+      "Bash(python3 -c \"import ast; tree = ast.parse\\(open\\('app.py'\\).read\\(\\)\\); print\\('OK: app.py parsed'\\)\")"
     ]
   }
 }

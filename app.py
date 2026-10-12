@@ -1607,20 +1607,13 @@ async def _finish_interview():
         f"---\n\n"
         f"_Session ID: `{session_id}`_"
     )
-    await cl.Message(content=report).send()
+    await cl.Message(content=report, actions=make_restart_action()).send()
 
     # Persist the session through the LangGraph save_session node.
     persist_state = await _run_graph(PHASE_PERSIST)
-    saved_path = persist_state.get("saved_path")
-    if saved_path:
-        await cl.Message(
-            content=f"Сессия сохранена в `{saved_path}`",
-            actions=make_restart_action(),
-        ).send()
-    else:
+    if not persist_state.get("saved_path"):
         await cl.Message(
             content="⚠️ Не удалось сохранить сессию, но отчёт выше — твой результат.",
-            actions=make_restart_action(),
         ).send()
 
 
