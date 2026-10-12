@@ -15,19 +15,26 @@ def get_chat_model_for(category: str = "tech", temperature: float = 0.7) -> Chat
         "general": settings.MODEL_GENERAL,
     }
     model = model_by_category.get(category, settings.MODEL_TECH)
-    headers = {
-        "HTTP-Referer": settings.OPENROUTER_REFERER or "https://sokrat.local",
-        "X-Title": "Sokrat AI Interviewer",
-    }
+    headers = None
+    if settings.LLM_PROVIDER == "openrouter":
+        headers = {
+            "HTTP-Referer": settings.OPENROUTER_REFERER or "https://sokrat.local",
+            "X-Title": "Sokrat AI Interviewer",
+        }
     return ChatOpenAI(
         model=model,
-        api_key=settings.OPENROUTER_API_KEY or "missing",
-        base_url=settings.OPENROUTER_BASE_URL,
+        api_key=settings.LLM_API_KEY or "missing",
+        base_url=settings.LLM_BASE_URL,
         temperature=temperature,
         timeout=60,
         max_retries=2,
         default_headers=headers,
     )
+
+
+def llm_configured() -> bool:
+    """True, если для активного провайдера задан API-ключ."""
+    return bool(settings.LLM_API_KEY)
 
 
 def get_chat_model(temperature: float = 0.7) -> ChatOpenAI:

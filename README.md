@@ -23,3 +23,14 @@ ALLOW_SIGNUP=true   # false — запретить саморегистраци�
 - **Сводная аналитика** для вузов/HR: `python -m sokrat.analytics [--role "Python Developer"]`
   сохраняет `data/analytics.md` (распределение результатов, типичные пробелы, без ответов
   пользователей).
+
+
+## LLM-провайдер
+
+По умолчанию используется **DeepSeek**: задайте `DEEPSEEK_API_KEY` в `.env`
+(`LLM_PROVIDER=deepseek`). Запасной вариант — OpenRouter (`LLM_PROVIDER=openrouter`
+и `OPENROUTER_API_KEY`). Проверить связь можно командой:
+
+```
+python -m sokrat.llm_check
+```

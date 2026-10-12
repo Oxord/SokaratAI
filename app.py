@@ -47,6 +47,7 @@ from sokrat.practice import (
     format_task,
     generate_task,
 )
+from sokrat.llm import llm_configured
 from sokrat.question_generator import generate_questions
 from sokrat.readiness import compute_readiness
 from sokrat.resume_parser import (
@@ -998,6 +999,13 @@ if os.getenv("CHAINLIT_AUTH_SECRET"):
 @cl.on_chat_start
 async def on_chat_start():
     _init_session()
+    if not llm_configured():
+        await cl.Message(
+            content=(
+                "⚠️ **LLM-провайдер не настроен**: задай `DEEPSEEK_API_KEY` в `.env` "
+                "и перезапусти приложение — без него вопросы и оценка не будут работать."
+            )
+        ).send()
     await cl.Message(
         content=(
             "Добро пожаловать в **Сократ** — тренажёр собеседований.\n\n"
