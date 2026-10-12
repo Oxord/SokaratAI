@@ -46,6 +46,9 @@ class InterviewState(TypedDict, total=False):
     required_skills: NotRequired[list[str]]
     is_custom_role: NotRequired[bool]
     job_vacancy: NotRequired[dict[str, Any]]
+    company_profile: NotRequired[dict[str, Any]]
+    resume_profile: NotRequired[dict[str, Any]]
+    gap_analysis: NotRequired[dict[str, Any]]
 
     # Pre-built question pool + cursor.
     questions: NotRequired[list[dict[str, Any]]]

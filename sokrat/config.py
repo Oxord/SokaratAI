@@ -8,6 +8,9 @@ load_dotenv()
 
 PACKAGE_DIR: Path = Path(__file__).resolve().parent
 PROMPTS_DIR: Path = PACKAGE_DIR / "prompts"
+# Данные лежат в корне проекта (как у app.py и в .gitignore), а не внутри пакета.
+DATA_DIR: Path = PACKAGE_DIR.parent / "data"
+SESSIONS_DIR: Path = Path(os.getenv("SESSION_DIR") or DATA_DIR / "sessions")
 
 
 @dataclass(frozen=True)

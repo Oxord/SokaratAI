@@ -22,7 +22,16 @@ from sokrat.graph import (
     PHASE_START,
     build_graph,
 )
+from sokrat.company_profile import CompanyProfile, build_company_profile
+from sokrat.gap_analysis import GapAnalysis, analyze_gaps
 from sokrat.question_generator import generate_questions
+from sokrat.readiness import compute_readiness
+from sokrat.resume_parser import (
+    ResumeParseError,
+    ResumeProfile,
+    extract_resume_text,
+    parse_resume,
+)
 from sokrat.resource_generator import generate_resources
 from sokrat.role_classifier import classify_role
 from sokrat.stt import SaluteSpeechError, get_stt_client
@@ -566,6 +575,13 @@ def make_params_actions(category: str = "tech") -> list[cl.Action]:
         )
     actions.append(
         cl.Action(
+            name="upload_resume",
+            label="📄 Загрузить резюме (персонализация)",
+            payload={"value": "resume"},
+        )
+    )
+    actions.append(
+        cl.Action(
             name="param_done",
             label="✅ Готово →",
             payload={"value": "done"},
@@ -624,6 +640,9 @@ def _init_session():
     cl.user_session.set("required_skills", [])
     cl.user_session.set("is_custom_role", False)
     cl.user_session.set("job_context", None)
+    cl.user_session.set("company_profile", None)
+    cl.user_session.set("resume_profile", None)
+    cl.user_session.set("gap_analysis", None)
     cl.user_session.set("min_q", 0)
     cl.user_session.set("max_q", 0)
     cl.user_session.set("audio_buffer", None)
@@ -661,6 +680,15 @@ def _build_graph_state(current_step: str, **extra) -> dict:
             }
             if (job_ctx := cl.user_session.get("job_context"))
             else None
+        ),
+        "company_profile": (
+            cp.to_dict() if (cp := cl.user_session.get("company_profile")) else None
+        ),
+        "resume_profile": (
+            rp.to_dict() if (rp := cl.user_session.get("resume_profile")) else None
+        ),
+        "gap_analysis": (
+            ga.to_dict() if (ga := cl.user_session.get("gap_analysis")) else None
         ),
         "current_step": current_step,
     }
@@ -922,6 +950,18 @@ async def _handle_vacancy_input(text: str):
         step.output = f"категория: {category}"
     cl.user_session.set("role_category", category)
 
+    company_profile: CompanyProfile | None = None
+    if ctx.company:
+        async with cl.Step(name="Собираю профиль компании…", type="tool") as step:
+            company_profile = await asyncio.to_thread(build_company_profile, ctx.company, ctx)
+            step.output = (
+                "источники: " + ", ".join(company_profile.sources)
+                if company_profile.sources
+                else "открытых данных о компании не найдено"
+            )
+        if not company_profile.is_empty():
+            cl.user_session.set("company_profile", company_profile)
+
     summary_lines = [
         f"Нашёл вакансию: **{role}**" + (f" — _{ctx.company}_" if ctx.company else "") + " ✅"
     ]
@@ -929,6 +969,20 @@ async def _handle_vacancy_input(text: str):
         summary_lines.append(f"- Стек из вакансии: **{', '.join(ctx.skills)}**")
     if ctx.responsibilities:
         summary_lines.append("- Обязанности: " + "; ".join(ctx.responsibilities[:3]))
+    if company_profile and not company_profile.is_empty():
+        summary_lines.append(f"\n**🏢 О компании {company_profile.name}**")
+        if company_profile.industry:
+            summary_lines.append(f"- Сфера: {company_profile.industry}")
+        if company_profile.products:
+            summary_lines.append(f"- Продукты: {', '.join(company_profile.products)}")
+        if company_profile.tech_stack:
+            summary_lines.append(f"- Технологии: {', '.join(company_profile.tech_stack)}")
+        if company_profile.sources:
+            summary_lines.append(f"_Источники: {'; '.join(company_profile.sources)}_")
+        summary_lines.append(
+            "_Вопросы будут опираться на эти данные. Если что-то выглядит неверно — "
+            "это взято из открытых источников выше._"
+        )
     summary_lines.append(
         "\nУровень, тип интервью и фокус-навыки уже подобраны по вакансии — "
         "проверь/поправь ниже и жми **Готово**."
@@ -954,11 +1008,15 @@ def _params_content(role: str | None) -> str:
     else:
         mode_view = "—"
     vacancy_view = f"\n📎 По вакансии: **{job_ctx.company}**\n" if job_ctx and job_ctx.company else ""
+    resume: ResumeProfile | None = cl.user_session.get("resume_profile")
+    resume_view = (
+        f"\n📄 Резюме учтено: **{resume.headline or 'загружено'}**\n" if resume else ""
+    )
 
     return (
         f"### ⚙️ Настрой интервью\n\n"
         f"Роль: **{role}** ✓\n"
-        f"{vacancy_view}\n"
+        f"{vacancy_view}{resume_view}\n"
         f"Кликай по кнопкам ниже — выбери уровень, тип и режим. Когда всё готово, жми **Готово →**.\n\n"
         f"- 📈 **Уровень**: {level_view}\n"
         f"- 🧩 **Тип**: {type_view}\n"
@@ -1057,6 +1115,77 @@ async def on_param_mode(action: cl.Action):
     await _update_params_message()
 
 
+@cl.action_callback("upload_resume")
+async def on_upload_resume(action: cl.Action):
+    if cl.user_session.get("state") != "select_params":
+        return
+
+    files = await cl.AskFileMessage(
+        content=(
+            "📄 Загрузи резюме (**PDF, DOCX или TXT**, до 5 МБ). Контакты вырезаются до "
+            "обработки, сам файл не сохраняется — остаётся только структурированный профиль."
+        ),
+        accept=[
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "text/plain",
+            ".pdf",
+            ".docx",
+            ".txt",
+        ],
+        max_size_mb=5,
+        timeout=180,
+    ).send()
+    if not files:
+        await cl.Message(content="Файл не получен — продолжаем без резюме.").send()
+        return
+
+    try:
+        async with cl.Step(name="Разбираю резюме…", type="tool") as step:
+            text = await asyncio.to_thread(extract_resume_text, files[0].path)
+            profile = await asyncio.to_thread(parse_resume, text)
+            step.output = (
+                f"навыков: {len(profile.skills)}, мест работы: {len(profile.experience)}"
+            )
+    except ResumeParseError as exc:
+        await cl.Message(
+            content=f"⚠️ Не получилось разобрать резюме: {exc}. Продолжаем без него."
+        ).send()
+        return
+
+    cl.user_session.set("resume_profile", profile)
+    lines = ["Резюме учтено ✅"]
+    if profile.headline:
+        lines.append(f"- Профиль: **{profile.headline}**")
+    if profile.skills:
+        lines.append(f"- Навыки: {', '.join(profile.skills[:12])}")
+
+    job_ctx: VacancyContext | None = cl.user_session.get("job_context")
+    if job_ctx and job_ctx.skills:
+        gaps = analyze_gaps(job_ctx.skills, profile)
+        cl.user_session.set("gap_analysis", gaps)
+        lines.append(f"\n**Совпадение с вакансией: {gaps.coverage_pct:g}%**")
+        if gaps.matched:
+            lines.append(f"- ✅ Подтверждено опытом: {', '.join(gaps.matched)}")
+        if gaps.weak_evidence:
+            lines.append(
+                f"- 🟡 Указано, но без примеров в опыте: {', '.join(gaps.weak_evidence)}"
+            )
+        if gaps.missing:
+            lines.append(f"- ⚠️ Нет в резюме: {', '.join(gaps.missing)}")
+        lines.append("\nИнтервью будет сделано упором на пробелы и слабо подтверждённое.")
+    else:
+        lines.append(
+            "\nВопросы будут опираться на твой реальный опыт и проекты из резюме."
+        )
+
+    if not cl.user_session.get("level") and profile.level_guess:
+        cl.user_session.set("level", profile.level_guess)
+
+    await cl.Message(content="\n".join(lines)).send()
+    await _update_params_message()
+
+
 @cl.action_callback("param_done")
 async def on_param_done(action: cl.Action):
     level = cl.user_session.get("level")
@@ -1111,14 +1240,26 @@ async def _start_interview():
     is_custom_role: bool = bool(cl.user_session.get("is_custom_role"))
     db = cl.user_session.get("questions_db")
     job_ctx: VacancyContext | None = cl.user_session.get("job_context")
-    job_context_text = job_ctx.as_prompt_context() if job_ctx else ""
+    company: CompanyProfile | None = cl.user_session.get("company_profile")
+    resume: ResumeProfile | None = cl.user_session.get("resume_profile")
+    gaps: GapAnalysis | None = cl.user_session.get("gap_analysis")
+    job_context_text = "\n\n".join(
+        part
+        for part in (
+            job_ctx.as_prompt_context() if job_ctx else "",
+            company.as_prompt_context() if company else "",
+            resume.as_prompt_context() if resume else "",
+            gaps.as_prompt_context() if gaps else "",
+        )
+        if part
+    )
 
     mode = cl.user_session.get("interview_mode")
     min_q, max_q = compute_bounds(level, len(required_skills), mode)
     cl.user_session.set("min_q", min_q)
     cl.user_session.set("max_q", max_q)
 
-    needs_llm = bool(required_skills) or is_custom_role
+    needs_llm = bool(required_skills) or is_custom_role or resume is not None
     if needs_llm:
         async with cl.Step(name="Генерирую персонализированные вопросы…", type="tool") as step:
             questions = await asyncio.to_thread(
@@ -1478,6 +1619,9 @@ async def _finish_interview():
             log.exception("resource generation failed (best-effort, ignored)")
             resources = []
     summary["resources"] = resources
+    gap_analysis: GapAnalysis | None = cl.user_session.get("gap_analysis")
+    if cl.user_session.get("job_context") or gap_analysis:
+        summary["readiness"] = compute_readiness(summary, gap_analysis)
     cl.user_session.set("summary", summary)
 
     # Format report
@@ -1579,6 +1723,16 @@ async def _finish_interview():
             f"## {hero_emoji} {summary['verdict']} — {summary['percentage']}%\n\n"
             f"**Роль:** {role} · **Уровень:** {_level_display(level)} · **Тип:** {type_label}{skills_header_text}\n\n"
             f"_{summary['total_score']}/{summary['max_possible']} баллов_{skipped_note}"
+        )
+    readiness = summary.get("readiness")
+    if readiness and summary["counted_count"] > 0:
+        component_lines = "\n".join(
+            f"  - {c['name']}: **{c['value']:g}%** _(вес {c['weight_pct']}%)_"
+            for c in readiness["components"]
+        )
+        hero_block += (
+            f"\n\n### 🎯 Индекс готовности к вакансии: **{readiness['index']}/100** — "
+            f"{readiness['label']}\n{component_lines}"
         )
     await cl.Message(content=hero_block).send()
 
