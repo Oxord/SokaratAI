@@ -189,3 +189,23 @@ def recent_weak_topics(
         if len(topics) >= limit:
             break
     return topics
+
+
+def other_vacancies(
+    user_id: str,
+    current_company: str,
+    session_id: str,
+    sessions_dir: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Последний индекс готовности по другим компаниям пользователя (для сравнения)."""
+    latest: dict[str, dict[str, Any]] = {}
+    for r in load_sessions(sessions_dir):
+        if r["user_id"] != user_id or r["session_id"] == session_id:
+            continue
+        company = r["company"].strip()
+        if not company or company.lower() == (current_company or "").strip().lower():
+            continue
+        if r["readiness"] is None:
+            continue
+        latest[company.lower()] = {"company": company, "readiness": r["readiness"], "role": r["role"]}
+    return sorted(latest.values(), key=lambda x: x["readiness"], reverse=True)[:5]

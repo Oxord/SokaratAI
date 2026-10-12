@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import random
+import re
 import threading
 import time
 import uuid
@@ -24,7 +25,7 @@ from sokrat.graph import (
 )
 from sokrat.company_profile import CompanyProfile, build_company_profile
 from sokrat.gap_analysis import GapAnalysis, analyze_gaps
-from sokrat.history import build_dynamics, format_dynamics, recent_weak_topics
+from sokrat.history import build_dynamics, format_dynamics, other_vacancies, recent_weak_topics
 from sokrat.users import authenticate
 from sokrat.personas import (
     DEFAULT_PERSONA,
@@ -54,7 +55,7 @@ from sokrat.resume_parser import (
 )
 from sokrat.resource_generator import generate_resources
 from sokrat.role_classifier import classify_role
-from sokrat.stt import SaluteSpeechError, get_stt_client
+from sokrat.stt import SaluteSpeechError, get_stt_client, tts_enabled
 from sokrat.star_analysis import (
     STAR_PARTS as STAR_LABELS,
     aggregate_star,
@@ -682,6 +683,11 @@ def make_report_actions() -> list[cl.Action]:
             name="study_plan",
             label="📅 План подготовки на 7 дней",
             payload={"value": "7"},
+        ),
+        cl.Action(
+            name="download_report",
+            label="📄 Скачать отчёт (Markdown)",
+            payload={"value": "md"},
         ),
         cl.Action(
             name="practice",
@@ -1625,6 +1631,25 @@ async def _handle_practice_solution(text: str):
     ).send()
 
 
+@cl.action_callback("download_report")
+async def on_download_report(action: cl.Action):
+    markdown: str | None = cl.user_session.get("report_markdown")
+    if not markdown:
+        await cl.Message(content="Отчёт ещё не сформирован.").send()
+        return
+    session_id = (cl.user_session.get("session_id") or "report")[:8]
+    await cl.Message(
+        content="Отчёт готов — можно отправить ментору или сохранить:",
+        elements=[
+            cl.File(
+                name=f"sokrat-report-{session_id}.md",
+                content=markdown.encode("utf-8"),
+                display="inline",
+            )
+        ],
+    ).send()
+
+
 @cl.action_callback("study_plan")
 async def on_study_plan(action: cl.Action):
     focus_areas: list[str] = cl.user_session.get("focus_areas") or []
@@ -1677,6 +1702,32 @@ async def on_restart(action: cl.Action):
 
 # ── Interview flow ────────────────────────────────────────────────────────────
 
+_MD_STRIP_RE = re.compile(r"[`*_>#]+")
+
+
+async def _speak(text: str) -> None:
+    """Озвучивает вопрос (если включён TTS). Best-effort: сбой не мешает интервью."""
+    if not tts_enabled():
+        return
+    client = get_stt_client()
+    if client is None:
+        return
+    clean = _MD_STRIP_RE.sub("", text).strip()
+    try:
+        audio = await asyncio.to_thread(client.synthesize_wav, clean)
+    except SaluteSpeechError:
+        log.warning("TTS failed (best-effort, ignored)", exc_info=True)
+        return
+    if not audio:
+        return
+    await cl.Message(
+        content="",
+        elements=[
+            cl.Audio(name="question.wav", content=audio, mime="audio/wav", auto_play=True)
+        ],
+    ).send()
+
+
 async def _ask_next_question():
     question_num = cl.user_session.get("question_num")
     questions = cl.user_session.get("questions")
@@ -1710,6 +1761,7 @@ async def _ask_next_question():
         actions=make_finish_interview_action(),
     ).send()
 
+    await _speak(q["question"])
     await _start_question_timer()
 
 
@@ -2023,6 +2075,21 @@ async def _finish_interview():
         )
 
     dynamics_section = format_dynamics(dynamics) if dynamics else ""
+    job_for_compare: VacancyContext | None = cl.user_session.get("job_context")
+    if job_for_compare and job_for_compare.company and _current_user_id():
+        try:
+            others = await asyncio.to_thread(
+                other_vacancies, _current_user_id(), job_for_compare.company, session_id or ""
+            )
+        except Exception:
+            log.exception("other vacancies lookup failed (best-effort, ignored)")
+            others = []
+        if others:
+            dynamics_section += (
+                "### 🆚 Готовность к другим вакансиям\n"
+                + "\n".join(f"- **{o['company']}** ({o['role']}) — {o['readiness']}/100" for o in others)
+                + "\n\n"
+            )
 
     pace_section = ""
     total_time = summary.get("total_time_seconds") or 0.0
@@ -2083,6 +2150,7 @@ async def _finish_interview():
             f"\n\n### 🎯 Индекс готовности к вакансии: **{readiness['index']}/100** — "
             f"{readiness['label']}\n{component_lines}"
         )
+    cl.user_session.set("report_hero", hero_block)
     await cl.Message(content=hero_block).send()
 
     # ── Радар: отдельным сообщением, чтобы график был визуально выше текста. ──
@@ -2122,6 +2190,9 @@ async def _finish_interview():
                 ],
             ).send()
 
+    cl.user_session.set(
+        "report_markdown", f"# Сократ — отчёт по интервью\n\n{hero_block}\n\n{report}"
+    )
     await cl.Message(content=report, actions=make_report_actions()).send()
 
     # Persist the session through the LangGraph save_session node.

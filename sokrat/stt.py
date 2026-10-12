@@ -22,9 +22,11 @@ log = logging.getLogger(__name__)
 
 OAUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 RECOGNIZE_URL = "https://smartspeech.sber.ru/rest/v1/speech:recognize"
+SYNTHESIZE_URL = "https://smartspeech.sber.ru/rest/v1/text:synthesize"
 
 # Верхняя граница синхронного API SaluteSpeech — 2 МБ payload'а.
 _MAX_AUDIO_BYTES = 2 * 1024 * 1024
+_MAX_TTS_CHARS = 1500
 
 
 class SaluteSpeechError(RuntimeError):
@@ -149,6 +151,42 @@ class SaluteSpeechClient:
         return str(result[0]).strip()
 
 
+    def synthesize_wav(self, text: str, voice: str = "Nec_24000") -> bytes:
+        """Озвучивает текст, возвращает WAV (PCM 16-bit). Лимит API — 4000 символов."""
+        text = (text or "").strip()
+        if not text:
+            return b""
+        if len(text) > _MAX_TTS_CHARS:
+            text = text[:_MAX_TTS_CHARS]
+
+        def _do_request(token: str) -> requests.Response:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/text",
+            }
+            try:
+                return requests.post(
+                    SYNTHESIZE_URL,
+                    headers=headers,
+                    params={"format": "wav16", "voice": voice},
+                    data=text.encode("utf-8"),
+                    verify=self._verify,
+                    timeout=self._timeout,
+                )
+            except requests.RequestException as exc:
+                raise SaluteSpeechError(f"Synthesize request failed: {exc}") from exc
+
+        resp = _do_request(self._get_token())
+        if resp.status_code == 401:
+            self._invalidate_token()
+            resp = _do_request(self._get_token())
+        if resp.status_code != 200:
+            raise SaluteSpeechError(
+                f"Synthesize failed: HTTP {resp.status_code} {resp.text[:200]}"
+            )
+        return resp.content
+
+
 _client: Optional[SaluteSpeechClient] = None
 _client_lock = Lock()
 
@@ -164,6 +202,12 @@ def _resolve_verify() -> bool | str:
         )
         return False
     return True
+
+
+def tts_enabled() -> bool:
+    """Озвучка вопросов включается явно: TTS_ENABLED=true и настроенный ключ SaluteSpeech."""
+    flag = os.getenv("TTS_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+    return flag and bool(os.getenv("SBER_SALUTE_AUTH_KEY", "").strip())
 
 
 def get_stt_client() -> Optional[SaluteSpeechClient]:
