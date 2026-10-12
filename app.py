@@ -24,7 +24,8 @@ from sokrat.graph import (
 )
 from sokrat.company_profile import CompanyProfile, build_company_profile
 from sokrat.gap_analysis import GapAnalysis, analyze_gaps
-from sokrat.history import build_dynamics, format_dynamics
+from sokrat.history import build_dynamics, format_dynamics, recent_weak_topics
+from sokrat.users import authenticate
 from sokrat.personas import (
     DEFAULT_PERSONA,
     PERSONAS,
@@ -699,6 +700,11 @@ def make_finish_interview_action() -> list[cl.Action]:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _current_user_id() -> str:
+    user = cl.user_session.get("user")
+    return str(getattr(user, "identifier", "") or "")
+
+
 def _init_session():
     cl.user_session.set("state", "select_role")
     cl.user_session.set("session_id", str(uuid.uuid4()))
@@ -770,6 +776,7 @@ def _build_graph_state(current_step: str, **extra) -> dict:
         "gap_analysis": (
             ga.to_dict() if (ga := cl.user_session.get("gap_analysis")) else None
         ),
+        "user_id": _current_user_id(),
         "interviewer_persona": cl.user_session.get("persona") or DEFAULT_PERSONA,
         "stress_mode": bool(cl.user_session.get("stress_mode")),
         "persona_style": feedback_style(
@@ -932,6 +939,18 @@ def _stop_question_timer() -> float:
 
 
 # ── Chainlit handlers ─────────────────────────────────────────────────────────
+
+if os.getenv("CHAINLIT_AUTH_SECRET"):
+    # Вход по логину/паролю включается, только если задан CHAINLIT_AUTH_SECRET.
+    # Без него приложение работает анонимно (история общая, как раньше).
+    _ALLOW_SIGNUP = os.getenv("ALLOW_SIGNUP", "true").lower() != "false"
+
+    @cl.password_auth_callback
+    def _auth_callback(username: str, password: str):
+        if authenticate(username, password, allow_signup=_ALLOW_SIGNUP):
+            return cl.User(identifier=username.strip().lower(), metadata={"role": "user"})
+        return None
+
 
 @cl.on_chat_start
 async def on_chat_start():
@@ -1358,6 +1377,26 @@ async def on_skills_skip(action: cl.Action):
     await _start_interview()
 
 
+def _repeat_topics_context(role: str | None, user_id: str) -> str:
+    """Блок «повтори слабое»: вопросы, на которых кандидат проседал раньше."""
+    if not role:
+        return ""
+    try:
+        topics = recent_weak_topics(role, user_id)
+    except Exception:
+        log.exception("weak topics lookup failed (best-effort, ignored)")
+        return ""
+    if not topics:
+        return ""
+    lines = "\n".join(f"- {t}" for t in topics)
+    return (
+        "В прошлых сессиях кандидат слабо ответил на вопросы:\n"
+        f"{lines}\n"
+        "Включи 1–2 новых вопроса на те же темы (другая формулировка, не повтор), "
+        "чтобы проверить, подтянул ли он их."
+    )
+
+
 async def _start_interview():
     role = cl.user_session.get("role")
     level = cl.user_session.get("level")
@@ -1370,6 +1409,7 @@ async def _start_interview():
     company: CompanyProfile | None = cl.user_session.get("company_profile")
     resume: ResumeProfile | None = cl.user_session.get("resume_profile")
     gaps: GapAnalysis | None = cl.user_session.get("gap_analysis")
+    repeat_ctx = _repeat_topics_context(role, _current_user_id())
     job_context_text = "\n\n".join(
         part
         for part in (
@@ -1377,6 +1417,7 @@ async def _start_interview():
             company.as_prompt_context() if company else "",
             resume.as_prompt_context() if resume else "",
             gaps.as_prompt_context() if gaps else "",
+            repeat_ctx,
             "Стиль интервьюера: "
             + question_style(
                 cl.user_session.get("persona"), bool(cl.user_session.get("stress_mode"))
@@ -1399,7 +1440,7 @@ async def _start_interview():
         cl.user_session.get("persona") not in (None, DEFAULT_PERSONA)
         or bool(cl.user_session.get("stress_mode"))
     )
-    needs_llm = bool(required_skills) or is_custom_role or resume is not None or stylized
+    needs_llm = bool(required_skills) or is_custom_role or resume is not None or stylized or bool(repeat_ctx)
     if needs_llm:
         async with cl.Step(name="Генерирую персонализированные вопросы…", type="tool") as step:
             questions = await asyncio.to_thread(
@@ -1819,7 +1860,9 @@ async def _finish_interview():
     summary["star"] = aggregate_star(scores)
     dynamics = None
     try:
-        dynamics = await asyncio.to_thread(build_dynamics, summary, role or "", session_id or "")
+        dynamics = await asyncio.to_thread(
+            build_dynamics, summary, role or "", session_id or "", None, _current_user_id()
+        )
     except Exception:
         log.exception("dynamics build failed (best-effort, ignored)")
     gap_analysis: GapAnalysis | None = cl.user_session.get("gap_analysis")

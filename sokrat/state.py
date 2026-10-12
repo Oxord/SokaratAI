@@ -49,6 +49,7 @@ class InterviewState(TypedDict, total=False):
     company_profile: NotRequired[dict[str, Any]]
     resume_profile: NotRequired[dict[str, Any]]
     gap_analysis: NotRequired[dict[str, Any]]
+    user_id: NotRequired[str]
     interviewer_persona: NotRequired[str]
     stress_mode: NotRequired[bool]
     persona_style: NotRequired[str]

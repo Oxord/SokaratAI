@@ -35,6 +35,7 @@ def _normalize(data: dict[str, Any]) -> dict[str, Any] | None:
     job = data.get("job_vacancy") or {}
     return {
         "session_id": str(data.get("session_id") or ""),
+        "user_id": str(data.get("user_id") or ""),
         "ts": _timestamp(data),
         "role": str(data.get("role") or ""),
         "level": str(data.get("level") or ""),
@@ -70,6 +71,7 @@ def build_dynamics(
     role: str,
     session_id: str,
     sessions_dir: Path | None = None,
+    user_id: str = "",
 ) -> dict[str, Any] | None:
     """Сравнивает текущий результат с прошлыми сессиями по той же роли.
 
@@ -78,7 +80,9 @@ def build_dynamics(
     previous = [
         r
         for r in load_sessions(sessions_dir)
-        if r["role"].strip().lower() == role.strip().lower() and r["session_id"] != session_id
+        if r["role"].strip().lower() == role.strip().lower()
+        and r["session_id"] != session_id
+        and r["user_id"] == user_id
     ][-_RECENT_LIMIT:]
     if not previous:
         return None
@@ -130,3 +134,58 @@ def format_dynamics(dyn: dict[str, Any]) -> str:
         if worst["delta"] < -0.5:
             lines.append(f"- Просело: **{worst['label']}** ({worst['delta']:+g})")
     return "\n".join(lines) + "\n\n"
+
+
+_WEAK_SCORE_MAX = 6
+
+
+def recent_weak_topics(
+    role: str,
+    user_id: str = "",
+    limit: int = 5,
+    sessions_dir: Path | None = None,
+) -> list[str]:
+    """Вопросы, на которых пользователь проседал в прошлых сессиях по роли.
+
+    Новые сессии (вопросы и оценки по индексам) и прежние (qa_pairs) читаются
+    одинаково. Свежие слабые ответы идут первыми, дубли убираются.
+    """
+    directory = sessions_dir or SESSIONS_DIR
+    if not directory.is_dir():
+        return []
+    wanted = role.strip().lower()
+    found: list[tuple[str, str]] = []
+    for path in sorted(directory.glob("*.json"))[:_MAX_FILES]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("role") or "").strip().lower() != wanted:
+            continue
+        if str(data.get("user_id") or "") != user_id:
+            continue
+        ts = _timestamp(data)
+        pairs: list[tuple[str, int]] = []
+        if isinstance(data.get("qa_pairs"), list):
+            for qa in data["qa_pairs"]:
+                if isinstance(qa, dict):
+                    pairs.append((str(qa.get("question_text") or ""), int(qa.get("score") or 0)))
+        else:
+            questions = data.get("questions") or []
+            scores = (data.get("scores") or [])
+            for q, sc in zip(questions, scores):
+                if isinstance(q, dict) and isinstance(sc, dict):
+                    pairs.append((str(q.get("question") or ""), int(sc.get("score") or 0)))
+        for text, score in pairs:
+            if text and 0 < score <= _WEAK_SCORE_MAX:
+                found.append((ts, text.strip()))
+    found.sort(key=lambda item: item[0], reverse=True)
+    topics: list[str] = []
+    for _, text in found:
+        if text.lower() not in {t.lower() for t in topics}:
+            topics.append(text)
+        if len(topics) >= limit:
+            break
+    return topics
