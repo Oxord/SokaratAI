@@ -35,6 +35,15 @@ from sokrat.personas import (
     question_style,
     suggest_persona,
 )
+from sokrat.practice import (
+    KINDS as PRACTICE_KINDS,
+    PracticeError,
+    PracticeTask,
+    evaluate_solution,
+    format_evaluation,
+    format_task,
+    generate_task,
+)
 from sokrat.question_generator import generate_questions
 from sokrat.readiness import compute_readiness
 from sokrat.resume_parser import (
@@ -674,6 +683,16 @@ def make_report_actions() -> list[cl.Action]:
             label="📅 План подготовки на 7 дней",
             payload={"value": "7"},
         ),
+        cl.Action(
+            name="practice",
+            label="🧪 Задача на код",
+            payload={"value": "code"},
+        ),
+        cl.Action(
+            name="practice",
+            label="🏗 System design",
+            payload={"value": "design"},
+        ),
         *make_restart_action(),
     ]
 
@@ -729,6 +748,7 @@ def _init_session():
     cl.user_session.set("focus_areas", [])
     cl.user_session.set("persona", None)
     cl.user_session.set("stress_mode", False)
+    cl.user_session.set("practice_task", None)
     cl.user_session.set("min_q", 0)
     cl.user_session.set("max_q", 0)
     cl.user_session.set("audio_buffer", None)
@@ -975,6 +995,8 @@ async def on_message(message: cl.Message):
             content="Интервью завершено. Нажми **«Начать новое интервью»** выше, чтобы попробовать снова.",
             actions=make_restart_action(),
         ).send()
+    elif state == "await_practice":
+        await _handle_practice_solution(message.content)
     elif state == "await_custom_role":
         await _handle_custom_role_input(message.content)
     elif state == "await_skills":
@@ -1544,6 +1566,63 @@ async def on_finish_interview(action: cl.Action):
     cl.user_session.set("question_started_at", None)
 
     await _finish_interview()
+
+
+@cl.action_callback("practice")
+async def on_practice(action: cl.Action):
+    if cl.user_session.get("state") not in ("finished", "await_practice"):
+        return
+    kind = action.payload.get("value", "code")
+    if kind not in PRACTICE_KINDS:
+        return
+
+    role = cl.user_session.get("role") or ""
+    level = cl.user_session.get("level") or ""
+    skills: list[str] = cl.user_session.get("required_skills") or []
+    company: CompanyProfile | None = cl.user_session.get("company_profile")
+    job_ctx: VacancyContext | None = cl.user_session.get("job_context")
+    context = "\n\n".join(
+        part
+        for part in (
+            job_ctx.as_prompt_context() if job_ctx else "",
+            company.as_prompt_context() if company else "",
+        )
+        if part
+    )
+    try:
+        async with cl.Step(name=f"Готовлю задание: {PRACTICE_KINDS[kind]}…", type="tool") as step:
+            task = await asyncio.to_thread(generate_task, kind, role, level, skills, context)
+            step.output = task.title
+    except PracticeError as exc:
+        await cl.Message(content=f"⚠️ Не получилось подготовить задание: {exc}").send()
+        return
+
+    cl.user_session.set("practice_task", task)
+    cl.user_session.set("state", "await_practice")
+    await cl.Message(content=format_task(task)).send()
+
+
+async def _handle_practice_solution(text: str):
+    task: PracticeTask | None = cl.user_session.get("practice_task")
+    if task is None:
+        cl.user_session.set("state", "finished")
+        return
+    level = cl.user_session.get("level") or ""
+    try:
+        async with cl.Step(name="Разбираю решение…", type="tool") as step:
+            evaluation = await asyncio.to_thread(evaluate_solution, task, text, level)
+            step.output = f"{evaluation.score}/10, критериев выполнено: {evaluation.met_count}/{len(evaluation.criteria)}"
+    except PracticeError as exc:
+        await cl.Message(
+            content=f"⚠️ {exc}. Пришли решение ещё раз или нажми «Начать новое интервью»."
+        ).send()
+        return
+
+    cl.user_session.set("practice_task", None)
+    cl.user_session.set("state", "finished")
+    await cl.Message(
+        content=format_evaluation(evaluation), actions=make_report_actions()
+    ).send()
 
 
 @cl.action_callback("study_plan")
