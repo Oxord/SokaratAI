@@ -17,6 +17,7 @@ import requests
 from langchain_core.messages import HumanMessage
 
 from .llm import extract_text, get_chat_model_for
+from .net_safety import safe_get
 from .prompts import load_prompt
 
 log = logging.getLogger(__name__)
@@ -124,16 +125,67 @@ def _vacancy_text_from_hh(data: dict[str, Any]) -> str:
     return "\n".join(p for p in parts if p.strip())
 
 
-def _fetch_generic(url: str) -> str:
+def _jobposting_nodes(obj: Any) -> list[dict[str, Any]]:
+    """Все узлы schema.org/JobPosting внутри JSON-LD (включая @graph и списки)."""
+    found: list[dict[str, Any]] = []
+    if isinstance(obj, list):
+        for item in obj:
+            found.extend(_jobposting_nodes(item))
+    elif isinstance(obj, dict):
+        node_type = obj.get("@type")
+        types = node_type if isinstance(node_type, list) else [node_type]
+        if "JobPosting" in types:
+            found.append(obj)
+        if "@graph" in obj:
+            found.extend(_jobposting_nodes(obj["@graph"]))
+    return found
+
+
+def _jobposting_text(html: str) -> str:
+    """Текст вакансии из JSON-LD JobPosting (Хабр Карьера, SuperJob, карьерные сайты)."""
+    for raw in re.findall(
+        r"(?is)<script[^>]+application/ld\+json[^>]*>(.*?)</script>", html
+    ):
+        try:
+            data = json.loads(raw.strip())
+        except json.JSONDecodeError:
+            continue
+        for node in _jobposting_nodes(data):
+            org = node.get("hiringOrganization")
+            company = org.get("name") if isinstance(org, dict) else org
+            skills = node.get("skills")
+            if isinstance(skills, list):
+                skills = ", ".join(str(s) for s in skills)
+            experience = node.get("experienceRequirements")
+            if isinstance(experience, dict):
+                experience = experience.get("description") or experience.get("monthsOfExperience")
+            parts = [
+                f"Вакансия: {node.get('title') or node.get('name') or ''}",
+                f"Компания: {company or ''}",
+                f"Ключевые навыки: {skills}" if skills else "",
+                f"Требуемый опыт: {experience}" if experience else "",
+                f"Описание: {_strip_html(str(node.get('description') or ''))}",
+            ]
+            text = "\n".join(p for p in parts if p.strip() and not p.endswith(": "))
+            if len(text) > 60:
+                return text
+    return ""
+
+
+def _fetch_generic(url: str) -> tuple[str, str]:
+    """Возвращает (текст, источник): "jsonld" для структурированной вакансии, иначе "html"."""
     try:
-        resp = requests.get(url, headers=_HEADERS, timeout=_FETCH_TIMEOUT)
+        resp = safe_get(url, headers=_HEADERS, timeout=_FETCH_TIMEOUT)
     except requests.RequestException as exc:
         raise VacancyParseError(f"не удалось загрузить страницу ({exc})") from exc
     if resp.status_code != 200:
         raise VacancyParseError(f"страница вернула HTTP {resp.status_code}")
     content = resp.content[:_MAX_HTML_BYTES]
     html = content.decode(resp.encoding or "utf-8", errors="ignore")
-    return _strip_html(html)
+    structured = _jobposting_text(html)
+    if structured:
+        return structured, "jsonld"
+    return _strip_html(html), "html"
 
 
 def _fetch_source_text(url_or_text: str) -> tuple[str, str]:
@@ -147,7 +199,8 @@ def _fetch_source_text(url_or_text: str) -> tuple[str, str]:
         if data:
             return _vacancy_text_from_hh(data)[:_MAX_TEXT_CHARS], "hh_api"
 
-    return _fetch_generic(text)[:_MAX_TEXT_CHARS], "html"
+    page_text, source = _fetch_generic(text)
+    return page_text[:_MAX_TEXT_CHARS], source
 
 
 def _parse_json_object(raw: str) -> dict[str, Any]:

@@ -6,19 +6,17 @@
 """
 from __future__ import annotations
 
-import ipaddress
 import logging
-import socket
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlparse
 
 import requests
 from langchain_core.messages import HumanMessage
 
 from .llm import extract_text, get_chat_model_for
+from .net_safety import safe_get
 from .prompts import load_prompt
 from .vacancy_parser import (
     _FETCH_TIMEOUT,
@@ -81,28 +79,6 @@ class CompanyProfile:
         return "\n".join(parts)
 
 
-def _is_public_http_url(url: str) -> bool:
-    """Защита от SSRF: ходим только на публичные http(s)-адреса."""
-    try:
-        parsed = urlparse(url)
-    except ValueError:
-        return False
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        return False
-    try:
-        infos = socket.getaddrinfo(parsed.hostname, None)
-    except OSError:
-        return False
-    for info in infos:
-        try:
-            addr = ipaddress.ip_address(info[4][0])
-        except ValueError:
-            return False
-        if not addr.is_global:
-            return False
-    return True
-
-
 def _hh_get(path: str, **params: Any) -> Any | None:
     try:
         resp = requests.get(
@@ -136,10 +112,8 @@ def _find_hh_employer(name: str) -> dict[str, Any] | None:
 
 
 def _fetch_site_text(url: str) -> str:
-    if not _is_public_http_url(url):
-        return ""
     try:
-        resp = requests.get(url, headers=_HEADERS, timeout=_FETCH_TIMEOUT)
+        resp = safe_get(url, headers=_HEADERS, timeout=_FETCH_TIMEOUT)
     except requests.RequestException:
         return ""
     if resp.status_code != 200:
