@@ -72,3 +72,16 @@ GitHub Pages не подходит (нужен Python-сервер). Подой�
 
 Локальная проверка контейнера: `docker build -t sokrat . && docker run -p 8000:8000
 -e DEEPSEEK_API_KEY=... sokrat`.
+
+### Обновление на своём сервере (Docker)
+
+```
+git archive HEAD | ssh user@server 'rm -rf /opt/sokrat/src && mkdir -p /opt/sokrat/src && tar -x -C /opt/sokrat/src'
+ssh user@server 'cd /opt/sokrat/src && docker build -t sokrat:latest . \
+  && docker rm -f sokrat && docker run -d --name sokrat --restart unless-stopped \
+     -p 8000:8000 --env-file /opt/sokrat/.env -v /opt/sokrat/data:/data sokrat:latest'
+```
+
+`/opt/sokrat/.env` содержит `DEEPSEEK_API_KEY`, `SESSION_DIR=/data/sessions`,
+`USERS_PATH=/data/users.json`, `SOKRAT_SECRET_PATH=/data/.secret`. Без HTTPS (доступ по IP)
+нужен `SOKRAT_COOKIE_SECURE=false`; за доменом с HTTPS — `true`.
