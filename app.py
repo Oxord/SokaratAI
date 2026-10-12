@@ -22,6 +22,7 @@ from sokrat.question_generator import generate_questions
 from sokrat.resource_generator import generate_resources
 from sokrat.role_classifier import classify_role
 from sokrat.stt import SaluteSpeechError, get_stt_client
+from sokrat.vacancy_parser import VacancyContext, VacancyParseError, extract_vacancy_context
 
 log = logging.getLogger(__name__)
 
@@ -281,6 +282,7 @@ def get_personalized_questions(
     is_custom_role: bool,
     count: int,
     role_category: str = "tech",
+    job_context: str = "",
 ) -> list[dict]:
     """Build a pool of `count` questions for a session.
 
@@ -319,6 +321,7 @@ def get_personalized_questions(
                 existing_texts,
                 required_skills,
                 role_category=role_category,
+                job_context=job_context,
             )
         except Exception:
             log.exception("personalized question generation failed")
@@ -760,6 +763,13 @@ def make_role_actions() -> list[cl.Action]:
             payload={"value": "custom"},
         )
     )
+    actions.append(
+        cl.Action(
+            name="select_role_vacancy",
+            label="📎 По ссылке на вакансию",
+            payload={"value": "vacancy"},
+        )
+    )
     return actions
 
 
@@ -851,6 +861,7 @@ def _init_session():
     cl.user_session.set("pending_dont_know", False)
     cl.user_session.set("required_skills", [])
     cl.user_session.set("is_custom_role", False)
+    cl.user_session.set("job_context", None)
     cl.user_session.set("min_q", 0)
     cl.user_session.set("max_q", 0)
     cl.user_session.set("audio_chunks", [])
@@ -1010,6 +1021,10 @@ async def starters():
             label="✏️ Другая роль…",
             message="Другая роль…",
         ),
+        cl.Starter(
+            label="📎 По ссылке на вакансию",
+            message="Вакансия по ссылке",
+        ),
     ]
 
 
@@ -1034,12 +1049,17 @@ async def on_message(message: cl.Message):
         await _handle_custom_role_input(message.content)
     elif state == "await_skills":
         await _handle_skills_input(message.content)
+    elif state == "await_vacancy_input":
+        await _handle_vacancy_input(message.content)
     elif state == "select_role":
         # User clicked a starter (text == role name) or typed something.
+        normalized = text.rstrip("…. ").lower()
         if text in ROLES:
             await _select_role(text)
-        elif text.rstrip("…. ").lower() == "другая роль":
+        elif normalized == "другая роль":
             await _start_custom_role_input()
+        elif normalized in ("вакансия по ссылке", "по ссылке на вакансию"):
+            await _start_vacancy_input()
         elif text:
             # Treat free text as a custom role name directly.
             cl.user_session.set("is_custom_role", True)
@@ -1058,6 +1078,10 @@ async def _resend_selection_prompt(state: str):
         ).send()
     elif state == "select_params":
         await _render_params_screen()
+    elif state == "await_vacancy_input":
+        await cl.Message(
+            content="Пришли ссылку на вакансию (например, с hh.ru) или вставь текст вакансии целиком."
+        ).send()
 
 
 async def _select_role(role: str):
@@ -1077,12 +1101,82 @@ async def _start_custom_role_input():
     ).send()
 
 
+async def _start_vacancy_input():
+    cl.user_session.set("state", "await_vacancy_input")
+    await cl.Message(
+        content=(
+            "Пришли **ссылку на вакансию** (например, с hh.ru) — или, если сайт не открывается "
+            "у меня, просто скопируй и вставь текст вакансии целиком.\n\n"
+            "Я подберу роль, уровень, тип интервью и стек под конкретную вакансию, "
+            "чтобы вопросы были про реальную работу и компанию, а не абстрактные."
+        )
+    ).send()
+
+
+async def _handle_vacancy_input(text: str):
+    raw = (text or "").strip()
+    if len(raw) < 8:
+        await cl.Message(
+            content="Пришли ссылку на вакансию или вставь текст вакансии целиком (хотя бы пару предложений)."
+        ).send()
+        return
+
+    async with cl.Step(name="Анализирую вакансию…", type="tool") as step:
+        try:
+            ctx = await asyncio.to_thread(extract_vacancy_context, raw)
+        except VacancyParseError as exc:
+            step.output = f"ошибка: {exc}"
+            await cl.Message(
+                content=(
+                    f"Не получилось разобрать вакансию ({exc}).\n\n"
+                    "Попробуй вставить **текст вакансии целиком** (скопируй со страницы), "
+                    "или напиши название должности вручную — например: `Middle Backend Developer`."
+                )
+            ).send()
+            return
+        step.output = (
+            f"роль: {ctx.title or '—'} · компания: {ctx.company or '—'} · источник: {ctx.source}"
+        )
+
+    role = ctx.title or raw[:_MAX_ROLE_LEN]
+    cl.user_session.set("role", role)
+    cl.user_session.set("is_custom_role", True)
+    cl.user_session.set("job_context", ctx)
+    if ctx.level_guess:
+        cl.user_session.set("level", ctx.level_guess)
+    if ctx.interview_type_guess:
+        cl.user_session.set("interview_type", ctx.interview_type_guess)
+    if ctx.skills:
+        cl.user_session.set("required_skills", ctx.skills)
+
+    async with cl.Step(name="Определяю тип роли…", type="tool") as step:
+        category = await asyncio.to_thread(classify_role, role)
+        step.output = f"категория: {category}"
+    cl.user_session.set("role_category", category)
+
+    summary_lines = [
+        f"Нашёл вакансию: **{role}**" + (f" — _{ctx.company}_" if ctx.company else "") + " ✅"
+    ]
+    if ctx.skills:
+        summary_lines.append(f"- Стек из вакансии: **{', '.join(ctx.skills)}**")
+    if ctx.responsibilities:
+        summary_lines.append("- Обязанности: " + "; ".join(ctx.responsibilities[:3]))
+    summary_lines.append(
+        "\nУровень, тип интервью и фокус-навыки уже подобраны по вакансии — "
+        "проверь/поправь ниже и жми **Готово**."
+    )
+    await cl.Message(content="\n".join(summary_lines)).send()
+
+    await _render_params_screen()
+
+
 def _params_content(role: str | None) -> str:
     category = cl.user_session.get("role_category") or "tech"
     levels_lbl = LEVEL_LABELS.get(category, LEVEL_LABELS["tech"])
     level = cl.user_session.get("level")
     interview_type = cl.user_session.get("interview_type")
     interview_mode = cl.user_session.get("interview_mode")
+    job_ctx: VacancyContext | None = cl.user_session.get("job_context")
 
     level_view = f"✓ **{levels_lbl.get(level, level)}**" if level else "—"
     type_view = f"✓ **{INTERVIEW_TYPES.get(interview_type, interview_type)}**" if interview_type else "—"
@@ -1091,10 +1185,12 @@ def _params_content(role: str | None) -> str:
         mode_view = f"✓ **{mlabel}** _({mhint})_"
     else:
         mode_view = "—"
+    vacancy_view = f"\n📎 По вакансии: **{job_ctx.company}**\n" if job_ctx and job_ctx.company else ""
 
     return (
         f"### ⚙️ Настрой интервью\n\n"
-        f"Роль: **{role}** ✓\n\n"
+        f"Роль: **{role}** ✓\n"
+        f"{vacancy_view}\n"
         f"Кликай по кнопкам ниже — выбери уровень, тип и режим. Когда всё готово, жми **Готово →**.\n\n"
         f"- 📈 **Уровень**: {level_view}\n"
         f"- 🧩 **Тип**: {type_view}\n"
@@ -1169,6 +1265,12 @@ async def on_select_role_custom(action: cl.Action):
     await _start_custom_role_input()
 
 
+@cl.action_callback("select_role_vacancy")
+async def on_select_role_vacancy(action: cl.Action):
+    await action.remove()
+    await _start_vacancy_input()
+
+
 @cl.action_callback("param_level")
 async def on_param_level(action: cl.Action):
     cl.user_session.set("level", action.payload["value"])
@@ -1206,6 +1308,12 @@ async def on_param_done(action: cl.Action):
         except Exception:
             log.debug("params msg cleanup failed", exc_info=True)
     cl.user_session.set("params_msg", None)
+
+    # Если навыки уже определены по вакансии — не переспрашиваем их отдельным шагом.
+    if cl.user_session.get("job_context") and cl.user_session.get("required_skills"):
+        await _start_interview()
+        return
+
     cl.user_session.set("state", "await_skills")
 
     await cl.Message(
@@ -1234,6 +1342,8 @@ async def _start_interview():
     required_skills: list[str] = cl.user_session.get("required_skills") or []
     is_custom_role: bool = bool(cl.user_session.get("is_custom_role"))
     db = cl.user_session.get("questions_db")
+    job_ctx: VacancyContext | None = cl.user_session.get("job_context")
+    job_context_text = job_ctx.as_prompt_context() if job_ctx else ""
 
     mode = cl.user_session.get("interview_mode")
     min_q, max_q = compute_bounds(level, len(required_skills), mode)
@@ -1253,6 +1363,7 @@ async def _start_interview():
                 is_custom_role,
                 max_q,
                 role_category,
+                job_context_text,
             )
             step.output = f"подготовлено {len(questions)} вопросов"
     else:
@@ -1284,10 +1395,14 @@ async def _start_interview():
             f"Закончим раньше, если уровень станет очевиден по нескольким "
             f"подряд идущим ответам."
         )
+    vacancy_line = (
+        f"- По вакансии: **{job_ctx.company}**\n" if job_ctx and job_ctx.company else ""
+    )
     await cl.Message(
         content=(
             f"**Параметры интервью**\n\n"
             f"- Роль: **{role}**\n"
+            f"{vacancy_line}"
             f"- Уровень: **{_level_display(level)}**\n"
             f"- Тип: **{INTERVIEW_TYPES[interview_type]}**\n"
             f"{skills_line}\n"
@@ -1739,6 +1854,15 @@ async def _finish_interview():
         "interview_mode": cl.user_session.get("interview_mode"),
         "is_custom_role": bool(cl.user_session.get("is_custom_role")),
         "required_skills": required_skills,
+        "job_vacancy": (
+            {
+                "company": job_ctx.company,
+                "source": job_ctx.source,
+                "company_description": job_ctx.company_description,
+            }
+            if (job_ctx := cl.user_session.get("job_context"))
+            else None
+        ),
         "summary": {
             "avg_score": summary["avg_score"],
             "total_score": summary["total_score"],

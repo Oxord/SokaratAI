@@ -7,9 +7,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 PACKAGE_DIR: Path = Path(__file__).resolve().parent
-DATA_DIR: Path = PACKAGE_DIR / "data"
-SESSIONS_DIR: Path = DATA_DIR / "sessions"
-QUESTIONS_PATH: Path = DATA_DIR / "questions.json"
 PROMPTS_DIR: Path = PACKAGE_DIR / "prompts"
 
 
