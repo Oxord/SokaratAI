@@ -39,6 +39,7 @@ def analyze_answer_node(state: InterviewState) -> dict[str, Any]:
             required_skills=required_skills,
             elapsed_seconds=elapsed_seconds,
             role_category=role_category,
+            persona_style=state.get("persona_style") or "",
         )
         evaluation.skills_touched = filter_skills_touched(
             evaluation.skills_touched, required_skills

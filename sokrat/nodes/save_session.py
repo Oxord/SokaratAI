@@ -16,6 +16,7 @@ VOLATILE_FIELDS: tuple[str, ...] = (
     "elapsed_seconds",
     "clarifications_used",
     "last_analysis",
+    "persona_style",
 )
 
 

@@ -25,6 +25,15 @@ from sokrat.graph import (
 from sokrat.company_profile import CompanyProfile, build_company_profile
 from sokrat.gap_analysis import GapAnalysis, analyze_gaps
 from sokrat.history import build_dynamics, format_dynamics
+from sokrat.personas import (
+    DEFAULT_PERSONA,
+    PERSONAS,
+    STRESS_TIME_LIMIT_SEC,
+    feedback_style,
+    get_persona,
+    question_style,
+    suggest_persona,
+)
 from sokrat.question_generator import generate_questions
 from sokrat.readiness import compute_readiness
 from sokrat.resume_parser import (
@@ -615,6 +624,21 @@ def make_params_actions(category: str = "tech") -> list[cl.Action]:
                 payload={"value": key},
             )
         )
+    for key, persona in PERSONAS.items():
+        actions.append(
+            cl.Action(
+                name="param_persona",
+                label=persona.label,
+                payload={"value": key},
+            )
+        )
+    actions.append(
+        cl.Action(
+            name="param_stress",
+            label="🔥 Стресс-режим вкл/выкл",
+            payload={"value": "toggle"},
+        )
+    )
     actions.append(
         cl.Action(
             name="upload_resume",
@@ -697,6 +721,8 @@ def _init_session():
     cl.user_session.set("resume_profile", None)
     cl.user_session.set("gap_analysis", None)
     cl.user_session.set("focus_areas", [])
+    cl.user_session.set("persona", None)
+    cl.user_session.set("stress_mode", False)
     cl.user_session.set("min_q", 0)
     cl.user_session.set("max_q", 0)
     cl.user_session.set("audio_buffer", None)
@@ -744,8 +770,16 @@ def _build_graph_state(current_step: str, **extra) -> dict:
         "gap_analysis": (
             ga.to_dict() if (ga := cl.user_session.get("gap_analysis")) else None
         ),
+        "interviewer_persona": cl.user_session.get("persona") or DEFAULT_PERSONA,
+        "stress_mode": bool(cl.user_session.get("stress_mode")),
+        "persona_style": feedback_style(
+            cl.user_session.get("persona"), bool(cl.user_session.get("stress_mode"))
+        ),
         "current_step": current_step,
     }
+    # В стресс-режиме уточнения не даём: лимит анализатора считается исчерпанным.
+    if cl.user_session.get("stress_mode"):
+        state["clarifications_used"] = max(state["clarifications_used"], 2)
     state.update(extra)
     return {k: v for k, v in state.items() if v is not None}
 
@@ -831,10 +865,24 @@ def _pace_score(seconds: float) -> int:
 
 async def _tick_timer(msg: cl.Message, started_at: float) -> None:
     """Раз в секунду обновляет сообщение-таймер. Завершается по cancel
-    или по достижению TIMER_HARD_CAP_SEC."""
+    или по достижению TIMER_HARD_CAP_SEC. В стресс-режиме по истечении лимита
+    один раз давит на кандидата и помечает таймер."""
+    stress = bool(cl.user_session.get("stress_mode"))
     try:
         while True:
             elapsed = time.monotonic() - started_at
+            if stress and STRESS_TIME_LIMIT_SEC <= elapsed < TIMER_HARD_CAP_SEC:
+                question_num = cl.user_session.get("question_num")
+                if cl.user_session.get("stress_warned_for") != question_num:
+                    cl.user_session.set("stress_warned_for", question_num)
+                    await cl.Message(
+                        content="⏰ **Время вышло.** На реальном интервью тебя бы уже "
+                        "перебили — заканчивай мысль и давай итог."
+                    ).send()
+                msg.content = f"🔥 ⏱ {_format_clock(elapsed)} — лимит {STRESS_TIME_LIMIT_SEC} сек превышен"
+                await msg.update()
+                await asyncio.sleep(1)
+                continue
             if elapsed >= TIMER_HARD_CAP_SEC:
                 msg.content = f"⏱ {_format_clock(TIMER_HARD_CAP_SEC)} (таймер остановлен)"
                 await msg.update()
@@ -1015,6 +1063,12 @@ async def _handle_vacancy_input(text: str):
             )
         if not company_profile.is_empty():
             cl.user_session.set("company_profile", company_profile)
+            if not cl.user_session.get("persona"):
+                suggested = suggest_persona(
+                    company_profile.industry, ctx.company_description
+                )
+                if suggested != DEFAULT_PERSONA:
+                    cl.user_session.set("persona", suggested)
 
     summary_lines = [
         f"Нашёл вакансию: **{role}**" + (f" — _{ctx.company}_" if ctx.company else "") + " ✅"
@@ -1062,6 +1116,9 @@ def _params_content(role: str | None) -> str:
     else:
         mode_view = "—"
     vacancy_view = f"\n📎 По вакансии: **{job_ctx.company}**\n" if job_ctx and job_ctx.company else ""
+    persona = get_persona(cl.user_session.get("persona"))
+    persona_view = f"✓ **{persona.label}** _({persona.hint})_"
+    stress = bool(cl.user_session.get("stress_mode"))
     resume: ResumeProfile | None = cl.user_session.get("resume_profile")
     resume_view = (
         f"\n📄 Резюме учтено: **{resume.headline or 'загружено'}**\n" if resume else ""
@@ -1075,6 +1132,8 @@ def _params_content(role: str | None) -> str:
         f"- 📈 **Уровень**: {level_view}\n"
         f"- 🧩 **Тип**: {type_view}\n"
         f"- 🚀 **Режим**: {mode_view}\n"
+        f"- 🎭 **Интервьюер**: {persona_view}\n"
+        f"- 🔥 **Стресс-режим**: {'**включён** _(лимит 90 сек, без уточнений, каверзные вопросы)_' if stress else 'выкл'}\n"
     )
 
 
@@ -1166,6 +1225,20 @@ async def on_param_type(action: cl.Action):
 @cl.action_callback("param_mode")
 async def on_param_mode(action: cl.Action):
     cl.user_session.set("interview_mode", action.payload["value"])
+    await _update_params_message()
+
+
+@cl.action_callback("param_persona")
+async def on_param_persona(action: cl.Action):
+    key = action.payload["value"]
+    if key in PERSONAS:
+        cl.user_session.set("persona", key)
+    await _update_params_message()
+
+
+@cl.action_callback("param_stress")
+async def on_param_stress(action: cl.Action):
+    cl.user_session.set("stress_mode", not cl.user_session.get("stress_mode"))
     await _update_params_message()
 
 
@@ -1304,6 +1377,15 @@ async def _start_interview():
             company.as_prompt_context() if company else "",
             resume.as_prompt_context() if resume else "",
             gaps.as_prompt_context() if gaps else "",
+            "Стиль интервьюера: "
+            + question_style(
+                cl.user_session.get("persona"), bool(cl.user_session.get("stress_mode"))
+            )
+            if (
+                cl.user_session.get("persona") not in (None, DEFAULT_PERSONA)
+                or cl.user_session.get("stress_mode")
+            )
+            else "",
         )
         if part
     )
@@ -1313,7 +1395,11 @@ async def _start_interview():
     cl.user_session.set("min_q", min_q)
     cl.user_session.set("max_q", max_q)
 
-    needs_llm = bool(required_skills) or is_custom_role or resume is not None
+    stylized = (
+        cl.user_session.get("persona") not in (None, DEFAULT_PERSONA)
+        or bool(cl.user_session.get("stress_mode"))
+    )
+    needs_llm = bool(required_skills) or is_custom_role or resume is not None or stylized
     if needs_llm:
         async with cl.Step(name="Генерирую персонализированные вопросы…", type="tool") as step:
             questions = await asyncio.to_thread(
@@ -1375,6 +1461,8 @@ async def _start_interview():
             f"{vacancy_line}"
             f"- Уровень: **{_level_display(level)}**\n"
             f"- Тип: **{INTERVIEW_TYPES[interview_type]}**\n"
+            f"- Интервьюер: **{get_persona(cl.user_session.get('persona')).label}**"
+            f"{' · 🔥 стресс-режим' if cl.user_session.get('stress_mode') else ''}\n"
             f"{skills_line}\n"
             f"{length_explanation} После каждого ответа — мгновенный фидбэк.\n\n"
             "Отвечай развёрнуто, как на настоящем интервью. Поехали! 🚀"

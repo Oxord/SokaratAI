@@ -96,6 +96,7 @@ def analyze_answer_llm(
     required_skills: list[str] | None = None,
     elapsed_seconds: float = 0.0,
     role_category: str = "tech",
+    persona_style: str = "",
 ) -> AnswerEvaluation:
     template = load_prompt("analyzer")
     hints_text = ", ".join(hints) if hints else "(подсказок нет)"
@@ -111,6 +112,7 @@ def analyze_answer_llm(
         clarifications_used=clarifications_used,
         required_skills=skills_text,
         elapsed_seconds=format_elapsed(elapsed_seconds),
+        persona_style=persona_style.strip() or "стандартный",
     )
 
     model = get_chat_model_for(role_category, temperature=0.3)
