@@ -5,8 +5,6 @@ __pycache__/
 venv/
 .env
 certs/
-sokrat/data/sessions/*.json
-!sokrat/data/sessions/.gitkeep
 .idea/
 .vscode/
 .DS_Store
