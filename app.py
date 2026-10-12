@@ -33,6 +33,8 @@ from sokrat.personas import (
     STRESS_TIME_LIMIT_SEC,
     feedback_style,
     get_persona,
+    language_feedback_directive,
+    language_question_directive,
     question_style,
     suggest_persona,
 )
@@ -645,6 +647,13 @@ def make_params_actions(category: str = "tech") -> list[cl.Action]:
         )
     actions.append(
         cl.Action(
+            name="param_lang",
+            label="🌐 English / Русский",
+            payload={"value": "toggle"},
+        )
+    )
+    actions.append(
+        cl.Action(
             name="param_stress",
             label="🔥 Стресс-режим вкл/выкл",
             payload={"value": "toggle"},
@@ -755,6 +764,7 @@ def _init_session():
     cl.user_session.set("persona", None)
     cl.user_session.set("stress_mode", False)
     cl.user_session.set("practice_task", None)
+    cl.user_session.set("lang", "ru")
     cl.user_session.set("min_q", 0)
     cl.user_session.set("max_q", 0)
     cl.user_session.set("audio_buffer", None)
@@ -805,8 +815,15 @@ def _build_graph_state(current_step: str, **extra) -> dict:
         "user_id": _current_user_id(),
         "interviewer_persona": cl.user_session.get("persona") or DEFAULT_PERSONA,
         "stress_mode": bool(cl.user_session.get("stress_mode")),
-        "persona_style": feedback_style(
-            cl.user_session.get("persona"), bool(cl.user_session.get("stress_mode"))
+        "persona_style": " ".join(
+            part
+            for part in (
+                feedback_style(
+                    cl.user_session.get("persona"), bool(cl.user_session.get("stress_mode"))
+                ),
+                language_feedback_directive(cl.user_session.get("lang")),
+            )
+            if part
         ),
         "current_step": current_step,
     }
@@ -1180,6 +1197,7 @@ def _params_content(role: str | None) -> str:
         f"- 🧩 **Тип**: {type_view}\n"
         f"- 🚀 **Режим**: {mode_view}\n"
         f"- 🎭 **Интервьюер**: {persona_view}\n"
+        f"- 🌐 **Язык интервью**: {'**English**' if cl.user_session.get('lang') == 'en' else 'русский'}\n"
         f"- 🔥 **Стресс-режим**: {'**включён** _(лимит 90 сек, без уточнений, каверзные вопросы)_' if stress else 'выкл'}\n"
     )
 
@@ -1280,6 +1298,13 @@ async def on_param_persona(action: cl.Action):
     key = action.payload["value"]
     if key in PERSONAS:
         cl.user_session.set("persona", key)
+    await _update_params_message()
+
+
+@cl.action_callback("param_lang")
+async def on_param_lang(action: cl.Action):
+    current = cl.user_session.get("lang") or "ru"
+    cl.user_session.set("lang", "en" if current == "ru" else "ru")
     await _update_params_message()
 
 
@@ -1446,6 +1471,7 @@ async def _start_interview():
             resume.as_prompt_context() if resume else "",
             gaps.as_prompt_context() if gaps else "",
             repeat_ctx,
+            language_question_directive(cl.user_session.get("lang")),
             "Стиль интервьюера: "
             + question_style(
                 cl.user_session.get("persona"), bool(cl.user_session.get("stress_mode"))
@@ -1467,6 +1493,7 @@ async def _start_interview():
     stylized = (
         cl.user_session.get("persona") not in (None, DEFAULT_PERSONA)
         or bool(cl.user_session.get("stress_mode"))
+        or cl.user_session.get("lang") == "en"
     )
     needs_llm = bool(required_skills) or is_custom_role or resume is not None or stylized or bool(repeat_ctx)
     if needs_llm:

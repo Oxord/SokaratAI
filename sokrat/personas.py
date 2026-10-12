@@ -103,3 +103,21 @@ def feedback_style(persona_key: str | None, stress: bool) -> str:
     if stress:
         style += " " + STRESS_FEEDBACK_STYLE
     return style
+
+
+ENGLISH_QUESTION_DIRECTIVE = (
+    "ЯЗЫК ИНТЕРВЬЮ — АНГЛИЙСКИЙ: формулируй ВСЕ вопросы, hints и ideal_keywords на английском "
+    "языке (JSON-ключи оставь как есть). Кандидат готовится к интервью для зарубежной компании."
+)
+ENGLISH_FEEDBACK_DIRECTIVE = (
+    "ЯЗЫК ИНТЕРВЬЮ — АНГЛИЙСКИЙ: feedback, explanation, strengths, weaknesses и ideal_answer "
+    "пиши на английском; оценивай в том числе качество английской речи (literacy, oratory)."
+)
+
+
+def language_question_directive(lang: str | None) -> str:
+    return ENGLISH_QUESTION_DIRECTIVE if lang == "en" else ""
+
+
+def language_feedback_directive(lang: str | None) -> str:
+    return ENGLISH_FEEDBACK_DIRECTIVE if lang == "en" else ""
