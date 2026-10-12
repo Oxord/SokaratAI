@@ -22,6 +22,7 @@ from .vacancy_parser import (
     _FETCH_TIMEOUT,
     _HEADERS,
     VacancyContext,
+    hh_headers,
     _parse_json_object,
     _strip_html,
 )
@@ -84,13 +85,14 @@ def _hh_get(path: str, **params: Any) -> Any | None:
         resp = requests.get(
             f"https://api.hh.ru{path}",
             params=params or None,
-            headers=_HEADERS,
+            headers=hh_headers(),
             timeout=_FETCH_TIMEOUT,
         )
     except requests.RequestException:
         log.warning("hh.ru request failed: %s", path, exc_info=True)
         return None
     if resp.status_code != 200:
+        log.info("hh.ru %s -> HTTP %s (профиль строится без данных работодателя)", path, resp.status_code)
         return None
     try:
         return resp.json()

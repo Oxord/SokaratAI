@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -84,17 +85,31 @@ def _strip_html(html: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def hh_headers() -> dict[str, str]:
+    """Заголовки для api.hh.ru. Анонимные запросы hh.ru отклоняет (403), поэтому при
+    наличии HH_API_TOKEN (токен приложения с dev.hh.ru) отправляем его."""
+    headers = dict(_HEADERS)
+    token = os.getenv("HH_API_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 def _fetch_hh_api(vacancy_id: str) -> dict[str, Any] | None:
     try:
         resp = requests.get(
             f"https://api.hh.ru/vacancies/{vacancy_id}",
-            headers=_HEADERS,
+            headers=hh_headers(),
             timeout=_FETCH_TIMEOUT,
         )
     except requests.RequestException:
         log.exception("hh.ru API request failed")
         return None
     if resp.status_code != 200:
+        log.warning(
+            "hh.ru API вернул HTTP %s (анонимный доступ закрыт — задайте HH_API_TOKEN)",
+            resp.status_code,
+        )
         return None
     try:
         return resp.json()

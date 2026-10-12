@@ -31,6 +31,8 @@ def _canon(skill: str) -> str:
     """Каноническое имя навыка: нижний регистр, схлопнутые пробелы, алиасы."""
     s = re.sub(r"[^\w+#./ -]+", " ", skill.lower())
     s = re.sub(r"\s+", " ", s).strip()
+    # «Python 3», «Vue 3», «Java 17» → базовое имя (версия не отдельный навык).
+    s = re.sub(r"\s+v?\d+(\.\d+)*\+?$", "", s)
     return _ALIASES.get(s, s)
 
 
@@ -47,7 +49,7 @@ def _mentioned_in(canon: str, text: str) -> bool:
         return False
     haystack = text.lower()
     for form in _surface_forms(canon):
-        pattern = r"(?<![\w+#])" + re.escape(form) + r"(?![\w+#])"
+        pattern = r"(?<![\w+#.])" + re.escape(form) + r"(?![\w+#])"
         if re.search(pattern, haystack):
             return True
     return False
