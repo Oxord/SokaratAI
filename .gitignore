@@ -12,3 +12,4 @@ data/sessions/
 .chainlit/
 *.egg-info/
 data/users.json
+data/.secret

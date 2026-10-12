@@ -75,3 +75,45 @@ def authenticate(
         except (KeyError, ValueError):
             return False
     return hmac.compare_digest(_hash(password, salt), expected)
+
+
+def validate_credentials(username: str, password: str) -> str | None:
+    """Возвращает текст ошибки или None, если логин/пароль допустимы."""
+    name = (username or "").strip().lower()
+    if not _USERNAME_RE.match(name):
+        return "Логин: 3–40 символов — буквы, цифры, точка, дефис, @, +."
+    if len(password or "") < _MIN_PASSWORD_LEN:
+        return f"Пароль должен быть не короче {_MIN_PASSWORD_LEN} символов."
+    return None
+
+
+def register(username: str, password: str, *, path: Path | None = None) -> bool:
+    """Создаёт пользователя. False, если логин уже занят."""
+    store = path or USERS_PATH
+    name = (username or "").strip().lower()
+    with _lock:
+        users = _load(store)
+        if name in users:
+            return False
+        salt = secrets.token_bytes(16)
+        users[name] = {"salt": salt.hex(), "hash": _hash(password, salt)}
+        _save(store, users)
+    return True
+
+
+def verify(username: str, password: str, *, path: Path | None = None) -> bool:
+    """Проверяет пароль существующего пользователя (без авто-регистрации)."""
+    store = path or USERS_PATH
+    name = (username or "").strip().lower()
+    with _lock:
+        record = _load(store).get(name)
+    if not record:
+        # Выравниваем время ответа, чтобы не раскрывать существование логина.
+        _hash(password or "", b"\x00" * 16)
+        return False
+    try:
+        salt = bytes.fromhex(record["salt"])
+        expected = record["hash"]
+    except (KeyError, ValueError):
+        return False
+    return hmac.compare_digest(_hash(password or "", salt), expected)
