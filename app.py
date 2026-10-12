@@ -24,6 +24,7 @@ from sokrat.graph import (
 )
 from sokrat.company_profile import CompanyProfile, build_company_profile
 from sokrat.gap_analysis import GapAnalysis, analyze_gaps
+from sokrat.history import build_dynamics, format_dynamics
 from sokrat.question_generator import generate_questions
 from sokrat.readiness import compute_readiness
 from sokrat.resume_parser import (
@@ -41,6 +42,12 @@ from sokrat.star_analysis import (
     analyze_star,
     format_star_block,
     is_behavioral,
+)
+from sokrat.study_plan import (
+    StudyPlanError,
+    build_study_plan,
+    collect_focus_areas,
+    format_study_plan,
 )
 from sokrat.summary_builder import compute_summary
 from sokrat.vacancy_parser import VacancyContext, VacancyParseError, extract_vacancy_context
@@ -500,6 +507,34 @@ def _build_radar_figure(dimensions: dict[str, float]):
     return fig
 
 
+def _build_progress_figure(points: list[float]):
+    """Линия прогресса по сессиям одной роли (процент баллов)."""
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        return None
+    xs = list(range(1, len(points) + 1))
+    fig = go.Figure(
+        data=[
+            go.Scatter(
+                x=xs,
+                y=points,
+                mode="lines+markers",
+                line=dict(color="#5B8DEF", width=3),
+                marker=dict(size=9),
+            )
+        ]
+    )
+    fig.update_layout(
+        xaxis=dict(title="Сессия", tickmode="array", tickvals=xs),
+        yaxis=dict(title="Результат, %", range=[0, 100]),
+        showlegend=False,
+        margin=dict(l=50, r=30, t=40, b=50),
+        title="Прогресс по роли",
+    )
+    return fig
+
+
 # ── Button factories ──────────────────────────────────────────────────────────
 
 _ROLE_EMOJI: dict[str, str] = {
@@ -607,6 +642,17 @@ def make_restart_action() -> list[cl.Action]:
     ]
 
 
+def make_report_actions() -> list[cl.Action]:
+    return [
+        cl.Action(
+            name="study_plan",
+            label="📅 План подготовки на 7 дней",
+            payload={"value": "7"},
+        ),
+        *make_restart_action(),
+    ]
+
+
 def make_skills_skip_action() -> list[cl.Action]:
     return [
         cl.Action(
@@ -650,6 +696,7 @@ def _init_session():
     cl.user_session.set("company_profile", None)
     cl.user_session.set("resume_profile", None)
     cl.user_session.set("gap_analysis", None)
+    cl.user_session.set("focus_areas", [])
     cl.user_session.set("min_q", 0)
     cl.user_session.set("max_q", 0)
     cl.user_session.set("audio_buffer", None)
@@ -1370,6 +1417,43 @@ async def on_finish_interview(action: cl.Action):
     await _finish_interview()
 
 
+@cl.action_callback("study_plan")
+async def on_study_plan(action: cl.Action):
+    focus_areas: list[str] = cl.user_session.get("focus_areas") or []
+    if not focus_areas:
+        await cl.Message(
+            content="Слабых мест для плана не нашлось — результат уже сильный. "
+            "Попробуй более сложный уровень или другую вакансию."
+        ).send()
+        return
+
+    role = cl.user_session.get("role") or ""
+    level = cl.user_session.get("level") or ""
+    company: CompanyProfile | None = cl.user_session.get("company_profile")
+    job_ctx: VacancyContext | None = cl.user_session.get("job_context")
+    context = "\n\n".join(
+        part
+        for part in (
+            job_ctx.as_prompt_context() if job_ctx else "",
+            company.as_prompt_context() if company else "",
+        )
+        if part
+    )
+    try:
+        async with cl.Step(name="Составляю план подготовки…", type="tool") as step:
+            plan = await asyncio.to_thread(
+                build_study_plan, role, level, int(action.payload.get("value", 7)),
+                focus_areas, context,
+            )
+            step.output = f"дней: {len(plan)}"
+    except StudyPlanError as exc:
+        await cl.Message(content=f"⚠️ Не получилось составить план: {exc}").send()
+        return
+
+    await action.remove()
+    await cl.Message(content=format_study_plan(plan), actions=make_restart_action()).send()
+
+
 @cl.action_callback("restart")
 async def on_restart(action: cl.Action):
     await action.remove()
@@ -1645,10 +1729,24 @@ async def _finish_interview():
             resources = []
     summary["resources"] = resources
     summary["star"] = aggregate_star(scores)
+    dynamics = None
+    try:
+        dynamics = await asyncio.to_thread(build_dynamics, summary, role or "", session_id or "")
+    except Exception:
+        log.exception("dynamics build failed (best-effort, ignored)")
     gap_analysis: GapAnalysis | None = cl.user_session.get("gap_analysis")
     if cl.user_session.get("job_context") or gap_analysis:
         summary["readiness"] = compute_readiness(summary, gap_analysis)
+    summary["dynamics"] = dynamics
     cl.user_session.set("summary", summary)
+    cl.user_session.set(
+        "focus_areas",
+        collect_focus_areas(
+            summary,
+            gap_analysis.to_dict() if gap_analysis else None,
+            weak_topics,
+        ),
+    )
 
     # Format report
     type_label = INTERVIEW_TYPES.get(interview_type, interview_type)
@@ -1713,6 +1811,8 @@ async def _finish_interview():
             f"- Полнота структуры: **{star_summary['avg_completeness_pct']:g}%** "
             f"(ответов: {star_summary['answers_count']}){missed_line}\n\n"
         )
+
+    dynamics_section = format_dynamics(dynamics) if dynamics else ""
 
     pace_section = ""
     total_time = summary.get("total_time_seconds") or 0.0
@@ -1791,6 +1891,7 @@ async def _finish_interview():
         f"{dimensions_section}"
         f"{pace_section}"
         f"{star_section}"
+        f"{dynamics_section}"
         f"### ✅ Сильные стороны\n{strengths_text}\n\n"
         f"### 🛠 Над чем поработать\n{improvements_text}\n\n"
         f"{skills_section}"
@@ -1801,7 +1902,17 @@ async def _finish_interview():
         f"---\n\n"
         f"_Session ID: `{session_id}`_"
     )
-    await cl.Message(content=report, actions=make_restart_action()).send()
+    if dynamics and len(dynamics["points"]) >= 2:
+        progress_fig = _build_progress_figure(dynamics["points"])
+        if progress_fig is not None:
+            await cl.Message(
+                content="### 📈 Прогресс по роли",
+                elements=[
+                    cl.Plotly(name="progress", figure=progress_fig, display="inline")
+                ],
+            ).send()
+
+    await cl.Message(content=report, actions=make_report_actions()).send()
 
     # Persist the session through the LangGraph save_session node.
     persist_state = await _run_graph(PHASE_PERSIST)
