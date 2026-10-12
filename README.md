@@ -57,3 +57,18 @@ python -m sokrat.llm_check
 
 Секрет для подписи cookie берётся из `SOKRAT_SECRET` (иначе генерируется в
 `data/.secret`). За HTTPS-прокси задайте `SOKRAT_COOKIE_SECURE=true`.
+
+## Деплой
+
+GitHub Pages не подходит (нужен Python-сервер). Подойдёт любой хостинг с Docker:
+
+- **Render** (free): New → Blueprint → выбрать репозиторий; `render.yaml` уже настроен.
+  Секрет `DEEPSEEK_API_KEY` вводится в панели Render. Бесплатный сервис «засыпает» после
+  простоя (первый запрос ~30–60 сек), файловая система временная: пользователи и история
+  теряются при перезапуске — для постоянного хранения нужен платный диск.
+- **Hugging Face Spaces** (Docker SDK), **Fly.io**, **Railway** — тот же `Dockerfile`.
+- **Быстрый показ с ноутбука:** `./run-web.sh` и `cloudflared tunnel --url http://localhost:8000`
+  (или ngrok) — временная публичная HTTPS-ссылка.
+
+Локальная проверка контейнера: `docker build -t sokrat . && docker run -p 8000:8000
+-e DEEPSEEK_API_KEY=... sokrat`.

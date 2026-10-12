@@ -107,6 +107,11 @@ def _set_cookie(response: Response, username: str) -> None:
     )
 
 
+@app.get("/healthz")
+def healthz() -> dict[str, bool]:
+    return {"ok": True}
+
+
 # ── конфигурация и авторизация ───────────────────────────────────────────────
 
 @app.get("/api/config")

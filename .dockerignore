@@ -1,0 +1,14 @@
+.venv
+.git
+.env
+__pycache__
+*.pyc
+certs
+data/sessions
+data/users.json
+data/.secret
+sokrat/data
+agents
+commands
+.claude
+.chainlit

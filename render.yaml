@@ -1,0 +1,16 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: sokrat
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: LLM_PROVIDER
+        value: deepseek
+      - key: DEEPSEEK_API_KEY
+        sync: false          # вводится вручную в панели Render, в git не хранится
+      - key: SOKRAT_SECRET
+        generateValue: true  # секрет подписи cookie
+      - key: SOKRAT_COOKIE_SECURE
+        value: "true"
