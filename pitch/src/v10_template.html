@@ -564,6 +564,24 @@
   .video-box.playing .video-ph { opacity: 0; }
   .video-box:not(.missing) .video-ph .file { display: none; }
   .demo-cap { margin-top: 18px; font-size: 22px; color: var(--ink-mute); }
+  .demo-ctrl {
+    width: 1300px; margin-top: 16px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .demo-ctrl .grow { flex: 1; }
+  .demo-ctrl button {
+    font: 600 18px/1 var(--font-body, inherit);
+    padding: 10px 18px;
+    border-radius: 999px;
+    border: 1px solid var(--line-strong);
+    background: var(--card);
+    color: var(--ink);
+    cursor: pointer;
+    transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+  }
+  .demo-ctrl button:hover { border-color: var(--accent-mid); background: var(--accent-soft); }
+  .demo-ctrl button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .demo-ctrl .speed { font-family: var(--font-mono); min-width: 64px; }
 
   /* ═══════════ 06 — Competitors ═══════════ */
   .comp-wrap { overflow: hidden; padding: 0; }
@@ -1289,19 +1307,29 @@
     <div class="browser anim d2">
       <div class="browser-bar"><span></span><span></span><span></span></div>
       <div class="video-box" id="demoBox">
-        <video id="demoVideo" src="assets/demo.mp4" controls preload="metadata"></video>
+        <video id="demoVideo" src="assets/demo.webm" controls muted preload="metadata"></video>
         <div class="video-ph">
           <div>
             <div class="play"></div>
-            <div class="cap">Демо: от вакансии до плана подготовки, 60 сек</div>
-            <div class="file">assets/demo.mp4</div>
+            <div class="cap">Демо: от вакансии до плана подготовки (ускорено ×4)</div>
+            <div class="file">assets/demo.webm</div>
           </div>
         </div>
       </div>
     </div>
-    <div class="demo-cap anim d3">Демо: от вакансии до плана подготовки, 60 сек</div>
+    <div class="demo-ctrl anim d3" id="demoCtrl">
+      <button type="button" class="chapter" data-t="3">Вакансия</button>
+      <button type="button" class="chapter" data-t="13">Gap-анализ</button>
+      <button type="button" class="chapter" data-t="35">Интервью</button>
+      <button type="button" class="chapter" data-t="246">Отчёт</button>
+      <span class="grow"></span>
+      <button type="button" class="speed active" data-rate="4">×4</button>
+      <button type="button" class="speed" data-rate="1">×1</button>
+    </div>
+    <div class="demo-cap anim d3">Демо: от вакансии до плана подготовки (ускорено ×4)</div>
     <aside class="notes" data-time="1:00" data-total="3:20">
       <p>Запускаю видео (клик по плееру). Комментирую по ходу: вставили вакансию → Sokrat собрал профиль компании → загрузили резюме, видим gap → пара вопросов интервью и разбор ответа → отчёт с индексом готовности и планом на 7 дней.</p>
+      <p>Клик по главе — прыжок к экрану; ×1 — если жюри попросит подробнее. Ответы в демо — тестового кандидата, сгенерированы для показа.</p>
       <p>Если видео не запускается — возвращаюсь на слайд 4 (←) и рассказываю по скриншотам.</p>
     </aside>
   </section>
@@ -1842,6 +1870,12 @@
 
   document.addEventListener('keydown', (e) => {
     const onVideo = document.activeElement && document.activeElement.tagName === 'VIDEO';
+    // На демо-слайде пробел — пауза/воспроизведение, а не следующий слайд
+    if (e.key === ' ' && !onVideo && slides[current].contains(demoVideo)) {
+      e.preventDefault();
+      if (demoVideo.paused) demoVideo.play(); else demoVideo.pause();
+      return;
+    }
     if (e.key === 'ArrowRight' || e.key === 'PageDown' || (e.key === ' ' && !onVideo)) {
       e.preventDefault(); next();
     } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
@@ -1886,6 +1920,38 @@
   demoVideo.addEventListener('error', () => demoBox.classList.add('missing'));
   demoVideo.addEventListener('play', () => demoBox.classList.add('playing'));
   if (demoVideo.error) demoBox.classList.add('missing');
+
+  /* ─── Demo video: chapters and speed (default ×4) ────────────── */
+  const demoCtrl = document.getElementById('demoCtrl');
+  const chapterBtns = [...demoCtrl.querySelectorAll('.chapter')];
+  const speedBtns = [...demoCtrl.querySelectorAll('.speed')];
+  let demoRate = 4;
+  function applyDemoRate() {
+    demoVideo.defaultPlaybackRate = demoRate;
+    demoVideo.playbackRate = demoRate;
+    speedBtns.forEach((b) => b.classList.toggle('active', Number(b.dataset.rate) === demoRate));
+  }
+  function markChapter() {
+    let idx = -1;
+    chapterBtns.forEach((b, i) => { if (demoVideo.currentTime + 0.25 >= Number(b.dataset.t)) idx = i; });
+    chapterBtns.forEach((b, i) => b.classList.toggle('active', i === idx));
+  }
+  ['loadedmetadata', 'play', 'seeked'].forEach((ev) => demoVideo.addEventListener(ev, applyDemoRate));
+  demoVideo.addEventListener('timeupdate', markChapter);
+  chapterBtns.forEach((b) => b.addEventListener('click', () => {
+    demoVideo.currentTime = Number(b.dataset.t);
+    applyDemoRate();
+    demoVideo.play();
+    markChapter();
+    b.blur();
+  }));
+  speedBtns.forEach((b) => b.addEventListener('click', () => {
+    demoRate = Number(b.dataset.rate);
+    applyDemoRate();
+    b.blur();
+  }));
+  applyDemoRate();
+
   function pauseDemoIfHidden() {
     if (!demoVideo.closest('.slide').classList.contains('active') && !demoVideo.paused) demoVideo.pause();
   }
