@@ -13,3 +13,6 @@ data/sessions/
 *.egg-info/
 data/users.json
 data/.secret
+
+# Видео для питча (тяжёлые файлы)
+pitch/assets/*.mp4
