@@ -16,3 +16,5 @@ data/.secret
 
 # Видео для питча (тяжёлые файлы)
 pitch/assets/*.mp4
+pitch/assets/*.webm
+.claude/settings.local.json
