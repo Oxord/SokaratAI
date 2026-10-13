@@ -6,7 +6,7 @@
 <title>Sokrat — AI-тренажёр собеседований под конкретную вакансию</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@500;600;700;800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@500;600;700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   /* ─── Reset / base ───────────────────────────────────────────── */
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -228,7 +228,14 @@
     width: 12px; height: 12px; flex-shrink: 0;
     border-radius: 999px;
     background: var(--amber);
-    box-shadow: 0 0 0 5px var(--amber-soft);
+    box-shadow: 0 0 0 0 rgba(194, 98, 12, 0.45);
+    animation: ping 2s ease-out infinite;
+  }
+  /* Notification-style ring: grows and fades */
+  @keyframes ping {
+    0%   { box-shadow: 0 0 0 0 rgba(194, 98, 12, 0.45); }
+    80%  { box-shadow: 0 0 0 12px rgba(194, 98, 12, 0); }
+    100% { box-shadow: 0 0 0 12px rgba(194, 98, 12, 0); }
   }
   .tag-hyp {
     display: inline-block;
@@ -248,6 +255,15 @@
     letter-spacing: 0.04em;
   }
   .stack-line b { color: var(--accent); font-weight: 600; }
+
+  /* Big figures: Instrument Sans with lining tabular digits (no Syne for numbers) */
+  .stat .value, .aud-stat .value, .price .amount, .cost-bar b, .rstep .n {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  /* Latin words inside Syne headings: avoid Syne's stylised a/g */
+  .lat { font-family: var(--font-body); }
 
   /* Content-light slides: centre the body block under the title */
   .vc-top { margin-top: auto; }
@@ -307,7 +323,6 @@
     align-items: center;
   }
   .stat .value {
-    font-family: var(--font-display);
     font-size: 84px;
     font-weight: 700;
     letter-spacing: -0.03em;
@@ -370,12 +385,17 @@
   .aud-card p { font-size: 30px; color: var(--ink-mute); line-height: 1.4; }
   .aud-stat {
     padding: 36px;
-    background: linear-gradient(160deg, var(--teal-soft), var(--card) 70%);
+    background: linear-gradient(120deg, var(--accent-soft), var(--teal-soft), var(--accent-soft));
+    background-size: 200% 200%;
+    animation: gradientShift 10s ease-in-out infinite alternate;
     border-color: var(--teal-mid);
     display: flex; flex-direction: column; justify-content: center;
   }
+  @keyframes gradientShift {
+    0%   { background-position: 0% 50%; }
+    100% { background-position: 100% 50%; }
+  }
   .aud-stat .value {
-    font-family: var(--font-display);
     font-size: 76px;
     font-weight: 700;
     color: var(--teal);
@@ -423,9 +443,7 @@
     background: var(--card);
     border: 2px solid var(--accent);
     color: var(--accent);
-    font-family: var(--font-mono);
-    font-weight: 600;
-    font-size: 20px;
+    font-size: 22px;
     margin-bottom: 14px;
     position: relative;
     box-shadow: var(--sh-1);
@@ -582,7 +600,18 @@
     font-size: 26px;
     font-weight: 700;
   }
-  .ck { font-size: 28px; line-height: 1; color: var(--green); font-weight: 700; }
+  .ck { font-size: 28px; line-height: 1; font-weight: 700; }
+  .ck.yes  { color: var(--green); }
+  .ck.part { color: var(--amber); }
+  .ck.no   { color: var(--ink-dim); }
+  .comp-legend {
+    margin-top: 16px;
+    display: flex; align-items: center; justify-content: space-between; gap: 30px;
+    font-size: 22px;
+    color: var(--ink-2);
+  }
+  .comp-legend .ck { font-size: 24px; margin-right: 8px; }
+  .comp-legend .dot { margin: 0 16px; color: var(--ink-dim); }
   .comp-foot {
     margin-top: 24px;
     display: flex; align-items: center; justify-content: space-between; gap: 30px;
@@ -600,46 +629,64 @@
   /* ═══════════ 07 — Business model ═══════════ */
   .bm-grid {
     display: grid;
-    grid-template-columns: 1.15fr 1fr;
+    grid-template-columns: 1fr 1fr;
     gap: 32px;
-    min-height: 440px;
+    align-items: stretch;
   }
-  .bm-col { padding: 34px 36px; display: flex; flex-direction: column; }
-  .bm-col .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+  .bm-col { padding: 32px 36px; display: flex; flex-direction: column; }
+  .bm-col .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; min-height: 40px; }
   .bm-col .head .mono-label { color: var(--accent); }
   .bm-col.b2b .head .mono-label { color: var(--teal); }
-  .prices { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .prices { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; flex: 1; }
   .price {
     border: 1px solid var(--line-strong);
     border-radius: var(--r-md);
-    padding: 34px 32px;
+    padding: 30px 30px;
     background: var(--card-soft);
+    display: flex; flex-direction: column; justify-content: center;
   }
-  .price .what { font-size: 24px; color: var(--ink-2); line-height: 1.3; margin-bottom: 14px; }
+  .price .what { font-size: 26px; font-weight: 600; color: var(--ink); line-height: 1.25; margin-bottom: 18px; }
   .price .amount {
-    font-family: var(--font-display);
-    font-size: 80px;
-    font-weight: 700;
+    font-size: 88px;
     letter-spacing: -0.03em;
     color: var(--accent);
     line-height: 1;
+    white-space: nowrap;
   }
   .price.alt .amount { color: var(--teal); }
-  .bm-col.b2b p { font-size: 32px; line-height: 1.4; color: var(--ink); }
-  .flow {
-    margin-top: auto;
-    display: flex; align-items: center; gap: 18px;
-    font-size: 24px;
+  .price .line { margin-top: 18px; font-size: 22px; color: var(--ink-mute); line-height: 1.35; }
+
+  .b2b-rows { display: flex; flex-direction: column; gap: 20px; flex: 1; justify-content: space-between; }
+  .b2b-row { display: grid; grid-template-columns: 52px 1fr; gap: 18px; align-items: start; font-size: 25px; line-height: 1.35; color: var(--ink-2); }
+  .b2b-row b { color: var(--ink); font-weight: 600; }
+  .b2b-row .ic {
+    width: 52px; height: 52px;
+    border-radius: 14px;
+    display: grid; place-items: center;
+    background: var(--teal-soft);
+    border: 1px solid var(--teal-mid);
+    color: var(--teal);
   }
-  .flow .stepbox {
-    padding: 14px 22px;
+  .b2b-flow {
+    margin-top: 14px;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr auto 1fr;
+    align-items: center;
+    gap: 12px;
+  }
+  .b2b-flow .stepbox {
+    text-align: center;
+    padding: 16px 12px;
     border-radius: var(--r-md);
     border: 1px solid var(--teal-mid);
     background: var(--teal-soft);
     color: var(--ink);
+    font-size: 24px;
     font-weight: 600;
+    line-height: 1.2;
   }
-  .flow .arr { color: var(--teal); font-size: 32px; font-weight: 700; }
+  .b2b-flow .stepbox.last { background: var(--teal); border-color: var(--teal); color: #fff; }
+  .b2b-flow .arr { color: var(--teal); font-size: 30px; font-weight: 700; }
   .cost-bar {
     margin-top: 28px;
     padding: 22px 30px;
@@ -649,11 +696,19 @@
     background: linear-gradient(90deg, var(--green-soft), var(--card) 60%);
   }
   .cost-bar .mono-label { color: var(--green); }
-  .cost-bar b { font-family: var(--font-display); font-size: 34px; color: var(--green); }
+  .cost-bar b { font-size: 34px; color: var(--green); }
 
   /* ═══════════ 08 — Validation ═══════════ */
   .val-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: stretch; }
   .val-col { padding: 36px 38px; }
+  .val-col.done { display: flex; flex-direction: column; }
+  .val-col.done .val-list { flex: 1; display: flex; flex-direction: column; justify-content: space-evenly; }
+  .val-next { display: flex; flex-direction: column; gap: 16px; }
+  .val-next > .mono-label { color: var(--teal); padding: 0 4px 4px; }
+  .hyp { padding: 22px 28px; border-left: 4px solid var(--teal); }
+  .hyp .mono-label { color: var(--teal); display: block; margin-bottom: 8px; }
+  .hyp .text { font-size: 26px; line-height: 1.32; color: var(--ink); }
+  .hyp .how { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 22px; color: var(--ink-mute); line-height: 1.35; }
   .val-col .mono-label { display: block; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
   .val-col.done .mono-label { color: var(--green); }
   .val-col.next .mono-label { color: var(--teal); }
@@ -714,13 +769,15 @@
   .tl-card { padding: 30px 30px 32px; min-height: 380px; }
   .tl-item.later .tl-card { border-style: dashed; border-color: var(--line-dashed); background: var(--card-soft); box-shadow: none; }
   .tl-when {
-    font-family: var(--font-mono);
-    font-size: 22px;
+    font-family: var(--font-body);
+    font-size: 30px;
     font-weight: 600;
     color: var(--accent);
-    letter-spacing: 0.04em;
-    margin-bottom: 18px;
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+    margin-bottom: 16px;
   }
+  .tl-item:nth-child(2) .tl-when { color: var(--accent-2); }
   .tl-item:nth-child(3) .tl-when { color: var(--teal); }
   .tl-item.later .tl-when { color: var(--ink-mute); }
   .tl-card ul { list-style: none; }
@@ -766,26 +823,28 @@
     color: var(--ink-mute);
     letter-spacing: 0.04em;
   }
+  /* Deep teal end (#0E7490) keeps white text above 4.5:1 across the gradient */
   .ask {
     padding: 36px 40px;
-    border-color: var(--accent-mid);
-    box-shadow: var(--sh-glow);
-    background: linear-gradient(160deg, var(--accent-soft), var(--card) 65%);
+    border-color: transparent;
+    box-shadow: var(--sh-3);
+    background: linear-gradient(135deg, #6845F0 0%, #0E7490 100%);
+    color: #FFFFFF;
   }
-  .ask .mono-label { color: var(--accent); display: block; margin-bottom: 14px; }
+  .ask .mono-label { color: rgba(255, 255, 255, 0.88); display: block; margin-bottom: 14px; }
   .ask ul { list-style: none; }
   .ask li {
     position: relative;
     padding: 18px 0 18px 46px;
     font-size: 28px;
     line-height: 1.3;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.22);
   }
   .ask li:last-child { border-bottom: none; }
   .ask li::before {
     content: "→";
     position: absolute; left: 0; top: 17px;
-    color: var(--accent);
+    color: #FFFFFF;
     font-weight: 700;
   }
 
@@ -793,7 +852,7 @@
   .s-divider { justify-content: center; }
   .s-divider .big {
     font-family: var(--font-display);
-    font-size: 120px;
+    font-size: 104px;
     font-weight: 700;
     letter-spacing: -0.035em;
     line-height: 1;
@@ -805,7 +864,7 @@
   .s-app .slide-tag .num { color: var(--teal); }
   .s-app .slide-tag::before { background: var(--teal); }
 
-  /* ═══════════ A1 — Architecture ═══════════ */
+  /* ═══════════ Appendix 1/4 — Architecture ═══════════ */
   .arch {
     display: grid;
     grid-template-columns: 0.8fr 0.9fr 1.35fr 1.1fr;
@@ -839,7 +898,7 @@
   }
   .arch-store .mono-label { flex-shrink: 0; }
 
-  /* ═══════════ A2 — Personal data ═══════════ */
+  /* ═══════════ Appendix 2/4 — Personal data ═══════════ */
   .pd-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; }
   .pd-col { padding: 30px 32px; }
   .pd-col .mono-label { display: block; margin-bottom: 14px; }
@@ -852,7 +911,7 @@
   .pd-col li:last-child { border-bottom: none; }
   .pd-note { margin-top: 26px; }
 
-  /* ═══════════ A3 — Risks ═══════════ */
+  /* ═══════════ Appendix 3/4 — Risks ═══════════ */
   .risk-list { display: flex; flex-direction: column; gap: 16px; }
   .risk {
     display: grid;
@@ -865,7 +924,7 @@
   .risk .q::before { content: "⚠"; color: var(--amber); }
   .risk .a { font-size: 22px; color: var(--ink-2); line-height: 1.35; padding-left: 28px; border-left: 2px solid var(--accent-mid); }
 
-  /* ═══════════ A4 — BMC ═══════════ */
+  /* ═══════════ Appendix 4/4 — BMC ═══════════ */
   .bmc {
     display: grid;
     grid-template-columns: repeat(10, 1fr);
@@ -1055,11 +1114,12 @@
     *, *::before, *::after { animation: none !important; transition: none !important; }
   }
 
-  /* ─── Print: one slide per A4 landscape page ─────────────────── */
-  @page { size: A4 landscape; margin: 0; }
+  /* ─── Print: one slide per landscape page, 297×210 mm ───────── */
+  @page { size: 297mm 210mm; margin: 0; }
   @media print {
     html, body { height: auto; overflow: visible; background: var(--bg); }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    *, *::before, *::after { animation: none !important; transition: none !important; }
     body::before, body::after, .hint, .notes-panel, .progress, .counter, .brand-mark { display: none !important; }
     .stage { position: static; transform: none; width: auto; height: auto; }
     .deck { position: static; }
@@ -1114,7 +1174,7 @@
   <!-- ════════════ 02 — Проблема ════════════ -->
   <section class="slide s-problem" data-label="02" aria-label="Проблема">
     <div class="slide-tag anim d1"><span class="num">02</span> Проблема</div>
-    <h2 class="section-title anim d2">Собеседование для джуна стало дефицитом — и провалить его дорого</h2>
+    <h2 class="section-title anim d2">Собеседование для джуна — редкий шанс. И провалить его дорого</h2>
 
     <div class="stat-row vc-top">
       <div class="card stat anim d3">
@@ -1132,14 +1192,14 @@
     <div class="pain-grid vc-bot">
       <div class="card pain anim d5" style="--bar-color: var(--accent);">
         <h3>Готовятся по абстрактным спискам</h3>
-        <p>а спрашивают про стек конкретной компании</p>
+        <p>а спрашивают про стек и задачи конкретной компании</p>
       </div>
       <div class="card pain anim d6" style="--bar-color: var(--teal);">
-        <h3>Живой mock-собес дорогой</h3>
-        <p>и не повторишь 5 раз</p>
+        <h3>Живой <span class="lat">mock</span>-собес дорогой</h3>
+        <p>и его не повторишь пять раз</p>
       </div>
       <div class="card pain anim d7" style="--bar-color: var(--rose);">
-        <h3>ChatGPT задаёт вопросы</h3>
+        <h3><span class="lat">ChatGPT</span> задаёт вопросы</h3>
         <p>но не ведёт интервью, не оценивает и не показывает прогресс</p>
       </div>
     </div>
@@ -1157,13 +1217,13 @@
     <div class="aud-grid vc-top">
       <div class="card aud-card focus anim d3">
         <span class="mono-label">Фокус MVP</span>
-        <h3>Junior IT</h3>
+        <h3><span class="lat">Junior IT</span></h3>
         <p>Первое собеседование — чёрный ящик</p>
       </div>
       <div class="card aud-card focus anim d4">
         <span class="mono-label">Фокус MVP</span>
         <h3>Карьерный переход</h3>
-        <p>Знания есть, продать себя не умеют</p>
+        <p>Знания есть — продать себя пока не умеют</p>
       </div>
       <div class="card aud-stat anim d5">
         <div class="value">300 000+</div>
@@ -1175,12 +1235,12 @@
     <div class="aud-next anim d6">
       <span class="mono-label">Дальше</span>
       <span class="chip">Студенты старших курсов</span>
-      <span class="chip">Опытные после перерыва</span>
+      <span class="chip">Опытные специалисты после перерыва</span>
     </div>
 
     <div class="plaque vc-bot anim d7">Доли сегментов и готовность платить — гипотеза, проверяем в CustDev</div>
     <aside class="notes" data-time="0:30" data-total="1:35">
-      <p>Фокус MVP — два сегмента: джуны в IT, для которых первое собеседование — чёрный ящик, и люди в карьерном переходе: знания есть, а продать себя не умеют. Дальше — студенты старших курсов и опытные после перерыва.</p>
+      <p>Фокус MVP — два сегмента: джуны в IT, для которых первое собеседование — чёрный ящик, и люди в карьерном переходе: знания есть, а продать себя пока не умеют. Дальше — студенты старших курсов и опытные специалисты после перерыва.</p>
       <p>По оценке «Зерокодера», в 2026–2029 на рынок выйдут 300 000+ студентов IT. Доли сегментов и готовность платить мы пока не утверждаем — это гипотеза, проверяем в CustDev.</p>
     </aside>
   </section>
@@ -1192,8 +1252,8 @@
 
     <div class="ribbon anim d3">
       <div class="rstep"><div class="n">1</div><h4>Вакансия</h4><p>ссылка или текст: hh.ru, Хабр Карьера</p></div>
-      <div class="rstep"><div class="n">2</div><h4>Профиль компании</h4><p>из hh.ru, сайта и текста вакансии</p></div>
-      <div class="rstep key"><div class="n">3</div><h4>Резюме →<br>gap-анализ</h4><p>что из требований уже есть в резюме</p></div>
+      <div class="rstep"><div class="n">2</div><h4>Профиль компании</h4><p>по данным hh.ru, сайта компании и вакансии</p></div>
+      <div class="rstep key"><div class="n">3</div><h4>Резюме →<br><span class="lat">gap</span>-анализ</h4><p>что из требований уже есть, а чего не хватает</p></div>
       <div class="rstep"><div class="n">4</div><h4>Интервью под вакансию</h4><p>персона интервьюера, стресс-режим, RU/EN</p></div>
       <div class="rstep"><div class="n">5</div><h4>Разбор каждого ответа</h4><p>точность, структура, полнота, STAR</p></div>
       <div class="rstep key"><div class="n">6</div><h4>Индекс готовности</h4><p>и план подготовки на 7 дней</p></div>
@@ -1242,7 +1302,7 @@
     <div class="demo-cap anim d3">Демо: от вакансии до плана подготовки, 60 сек</div>
     <aside class="notes" data-time="1:00" data-total="3:20">
       <p>Запускаю видео (клик по плееру). Комментирую по ходу: вставили вакансию → Sokrat собрал профиль компании → загрузили резюме, видим gap → пара вопросов интервью и разбор ответа → отчёт с индексом готовности и планом на 7 дней.</p>
-      <p>Если видео не запускается — переходим к следующему слайду и показываем скриншоты со слайда 4 (стрелка ←).</p>
+      <p>Если видео не запускается — возвращаюсь на слайд 4 (←) и рассказываю по скриншотам.</p>
     </aside>
   </section>
 
@@ -1264,23 +1324,27 @@
           </tr>
         </thead>
         <tbody>
-          <tr><td>Русский язык</td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td class="us"><span class="ck">✓</span></td></tr>
-          <tr><td>Интервью под вакансию</td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td class="us"><span class="ck">✓</span></td></tr>
-          <tr><td>Профиль компании</td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td class="us"><span class="ck">✓</span></td></tr>
-          <tr><td>Gap резюме ↔ вакансия</td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td class="us"><span class="ck">✓</span></td></tr>
-          <tr><td>Индекс готовности и план</td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td class="us"><span class="ck">✓</span></td></tr>
-          <tr><td>Прогресс между сессиями</td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td><span class="ph">?</span></td><td class="us"><span class="ck">✓</span></td></tr>
+          <tr><td>Русский язык</td><td><span class="ck yes">✓</span></td><td><span class="ck yes">✓</span></td><td><span class="ck part">◐</span></td><td><span class="ck yes">✓</span></td><td class="us"><span class="ck yes">✓</span></td></tr>
+          <tr><td>Интервью под вакансию</td><td><span class="ck part">◐</span></td><td><span class="ck no">✕</span></td><td><span class="ck yes">✓</span></td><td><span class="ck no">✕</span></td><td class="us"><span class="ck yes">✓</span></td></tr>
+          <tr><td>Профиль компании</td><td><span class="ck part">◐</span></td><td><span class="ck no">✕</span></td><td><span class="ck no">✕</span></td><td><span class="ck no">✕</span></td><td class="us"><span class="ck yes">✓</span></td></tr>
+          <tr><td>Gap резюме ↔ вакансия</td><td><span class="ck part">◐</span></td><td><span class="ck part">◐</span></td><td><span class="ck part">◐</span></td><td><span class="ck no">✕</span></td><td class="us"><span class="ck yes">✓</span></td></tr>
+          <tr><td>Индекс готовности и план</td><td><span class="ck no">✕</span></td><td><span class="ck no">✕</span></td><td><span class="ck part">◐</span></td><td><span class="ck no">✕</span></td><td class="us"><span class="ck yes">✓</span></td></tr>
+          <tr><td>Прогресс между сессиями</td><td><span class="ck no">✕</span></td><td><span class="ck part">◐</span></td><td><span class="ck part">◐</span></td><td><span class="ck no">✕</span></td><td class="us"><span class="ck yes">✓</span></td></tr>
         </tbody>
       </table>
     </div>
 
-    <div class="comp-foot anim d4">
-      <div class="pos-banner">Суфлёры помогают обмануть на собеседовании. <b>Мы — подготовиться к нему.</b></div>
-      <div class="src">По открытым описаниям сервисов, октябрь 2026</div>
+    <div class="comp-legend anim d4">
+      <span class="legend"><span class="ck yes">✓</span> есть<span class="dot">·</span><span class="ck part">◐</span> частично или вручную<span class="dot">·</span><span class="ck no">✕</span> нет</span>
+      <span class="src">По открытым описаниям сервисов, октябрь 2026</span>
+    </div>
+
+    <div class="comp-foot anim d5">
+      <div class="pos-banner">Суфлёры помогают обмануть на собеседовании. <b>Sokrat помогает к нему подготовиться.</b></div>
     </div>
     <aside class="notes" data-time="0:40" data-total="4:00">
-      <p>Вопросы для собеседования сегодня задают многие: ChatGPT и YandexGPT, Тренажёр Т1, Final Round AI. Но к конкретной вакансии — с профилем компании, gap-анализом резюме, индексом готовности и прогрессом между сессиями — готовит Sokrat.</p>
-      <p>Отдельно — суфлёры вроде ENIGMA и Qompanion: они помогают обмануть на собеседовании, мы — подготовиться к нему. Сравнение — по открытым описаниям сервисов на октябрь 2026.</p>
+      <p>Вопросы для собеседования сегодня задают многие: ChatGPT и YandexGPT, Тренажёр Т1, Final Round AI. Но к конкретной вакансии — с профилем компании, gap-анализом резюме, индексом готовности и прогрессом между сессиями — готовит Sokrat. ChatGPT может почти всё — но вручную: без сценария, оценки и прогресса.</p>
+      <p>Отдельно — суфлёры вроде ENIGMA и Qompanion: они помогают обмануть на собеседовании, Sokrat помогает к нему подготовиться. Сравнение — по открытым описаниям сервисов на октябрь 2026.</p>
     </aside>
   </section>
 
@@ -1296,20 +1360,27 @@
           <div class="price">
             <div class="what">Пакет 5 интервью</div>
             <div class="amount">490 ₽</div>
+            <div class="line">5 интервью под любые вакансии</div>
           </div>
           <div class="price alt">
-            <div class="what">30 дней на период поиска</div>
+            <div class="what">30 дней безлимита</div>
             <div class="amount">990 ₽</div>
+            <div class="line">Безлимит на время поиска работы</div>
           </div>
         </div>
       </div>
       <div class="card bm-col b2b anim d4">
         <div class="head"><span class="mono-label">B2B</span></div>
-        <p>Вузы и онлайн-школы: групповая аналитика по студентам.</p>
-        <div class="flow">
-          <span class="stepbox">Пилот 2 недели</span>
-          <span class="arr">→</span>
-          <span class="stepbox">Годовой контракт</span>
+        <div class="b2b-rows">
+          <div class="b2b-row"><span class="ic"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><div><b>Кому:</b> карьерные центры вузов, онлайн-школы</div></div>
+          <div class="b2b-row"><span class="ic"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M8 17v-5"/><path d="M13 17V8"/><path d="M18 17v-3"/></svg></span><div><b>Что:</b> mock-интервью для студентов + групповая аналитика — где группа проседает</div></div>
+          <div class="b2b-row"><span class="ic"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/><path d="M13 8l4 4-4 4"/></svg></span><div><b>Как продаём:</b>
+            <div class="b2b-flow">
+              <span class="stepbox">Демо</span><span class="arr">→</span>
+              <span class="stepbox">Пилот 2 недели</span><span class="arr">→</span>
+              <span class="stepbox last">Годовой контракт</span>
+            </div>
+          </div></div>
         </div>
       </div>
     </div>
@@ -1319,8 +1390,8 @@
       <span><b>≈1–2 ₽</b> на сессию (оценка, идёт замер)</span>
     </div>
     <aside class="notes" data-time="0:45" data-total="4:45">
-      <p>B2C — две гипотезы цены: пакет 5 интервью за 490 ₽ и 30 дней на период поиска за 990 ₽. Обе проверяем в CustDev. Себестоимость LLM — около 1–2 ₽ на сессию; это оценка, сейчас идёт замер.</p>
-      <p>B2B — вузы и онлайн-школы: групповая аналитика по студентам. Модель продажи: пилот на 2 недели → годовой контракт.</p>
+      <p>B2C — две гипотезы цены: пакет 5 интервью под любые вакансии за 490 ₽ и 30 дней безлимита на время поиска работы за 990 ₽. Обе проверяем в CustDev. Себестоимость LLM — около 1–2 ₽ на сессию; это оценка, сейчас идёт замер.</p>
+      <p>B2B — карьерные центры вузов и онлайн-школы: mock-интервью для студентов плюс групповая аналитика — видно, где группа проседает. Продаём так: демо → пилот на 2 недели → годовой контракт.</p>
     </aside>
   </section>
 
@@ -1338,18 +1409,28 @@
           <li><span class="ph">[N]</span> тестовых пользователей</li>
         </ul>
       </div>
-      <div class="card val-col next anim d4">
+      <div class="val-next anim d4">
         <span class="mono-label">Проверяем</span>
-        <ol class="val-list">
-          <li>Готовятся под конкретные вакансии и считают это проблемой</li>
-          <li>Готовы платить за пакет</li>
-          <li>Балл растёт за 2–3 сессии</li>
-        </ol>
+        <div class="card hyp">
+          <span class="mono-label">Проблема</span>
+          <div class="text">Бесплатные инструменты (ChatGPT, тренажёр Т1) не решают подготовку к конкретной вакансии</div>
+          <div class="how">Как проверяем: CustDev-интервью — чем не устраивают</div>
+        </div>
+        <div class="card hyp">
+          <span class="mono-label">Ценность</span>
+          <div class="text">Sokrat реально учит: средняя оценка ответов растёт от 1-й к 3-й сессии</div>
+          <div class="how">Как проверяем: тестовые пользователи, сравнение сессий</div>
+        </div>
+        <div class="card hyp">
+          <span class="mono-label">Деньги</span>
+          <div class="text">Джуны готовы заплатить 490 ₽ за пакет</div>
+          <div class="how">Как проверяем: вопрос о цене в CustDev, кнопка оплаты</div>
+        </div>
       </div>
     </div>
     <aside class="notes" data-time="0:40" data-total="5:25">
       <p>Что уже есть: работающий продукт — полный цикл от вакансии до плана подготовки, <span class="ph">[N]</span> CustDev-интервью и <span class="ph">[N]</span> тестовых пользователей.</p>
-      <p>Что проверяем — три гипотезы: люди готовятся под конкретные вакансии и считают это проблемой; готовы платить за пакет; балл растёт за 2–3 сессии.</p>
+      <p>Проверяем три гипотезы. Проблема: бесплатные инструменты — ChatGPT, тренажёр Т1 — не решают подготовку к конкретной вакансии; в CustDev выясняем, чем именно не устраивают. Ценность: Sokrat реально учит — средняя оценка ответов растёт от 1-й к 3-й сессии; проверяем на тестовых пользователях, сравнивая сессии. Деньги: джуны готовы заплатить 490 ₽ за пакет; спрашиваем о цене в CustDev и ставим кнопку оплаты.</p>
     </aside>
   </section>
 
@@ -1364,8 +1445,8 @@
         <div class="card tl-card">
           <div class="tl-when">Октябрь–ноябрь</div>
           <ul>
-            <li>CustDev 15 интервью</li>
-            <li>Хранилище, согласие на обработку ПДн, аналитика</li>
+            <li>15 CustDev-интервью</li>
+            <li>Надёжное хранение данных, согласие на ПДн, аналитика</li>
           </ul>
         </div>
       </div>
@@ -1374,8 +1455,8 @@
         <div class="card tl-card">
           <div class="tl-when">Декабрь</div>
           <ul>
-            <li>30–50 пользователей</li>
-            <li>Цели: completion ≥60%, ≥30% возвращаются</li>
+            <li><span class="ph">[N]</span> первых пользователей</li>
+            <li>≥60% доходят до отчёта, ≥30% возвращаются на 2‑ю сессию</li>
           </ul>
         </div>
       </div>
@@ -1401,7 +1482,7 @@
       </div>
     </div>
     <aside class="notes" data-time="0:40" data-total="6:05">
-      <p>Октябрь–ноябрь: 15 CustDev-интервью; хранилище, согласие на обработку ПДн и аналитика. Декабрь: 30–50 пользователей, цели — completion не ниже 60% и не меньше 30% возвращаются.</p>
+      <p>Октябрь–ноябрь: 15 CustDev-интервью; надёжное хранение данных, согласие на ПДн и аналитика. Декабрь: <span class="ph">[N]</span> первых пользователей; цель — не меньше 60% доходят до отчёта и не меньше 30% возвращаются на 2-ю сессию.</p>
       <p>Q1 2027: пилот с карьерным центром Волгатеха и запуск оплаты. Дальше — B2B-кабинет для вузов и школ и голосовой режим.</p>
     </aside>
   </section>
@@ -1434,36 +1515,36 @@
         <span class="mono-label">Запрос</span>
         <ul>
           <li>Ментор по B2B-продажам в EdTech</li>
-          <li>Выход на карьерный центр</li>
+          <li>Знакомство с карьерным центром Волгатеха</li>
           <li>Доступ к студентам для CustDev</li>
-          <li>Грант «Студенческий стартап»</li>
+          <li>Поддержка заявки на грант „Студенческий стартап“</li>
         </ul>
       </div>
     </div>
     <aside class="notes" data-time="0:35" data-total="6:40">
       <p>Нас трое, 2 курс, ПС-21, Волгатех: Иван — фронтенд, промпты, дизайн; Илья — бэкенд; Никита — аналитика и тестирование.</p>
-      <p>Просим: ментора по B2B-продажам в EdTech, выход на карьерный центр, доступ к студентам для CustDev и поддержку заявки на грант «Студенческий стартап». Спасибо! Дальше — приложение для вопросов.</p>
+      <p>Просим: ментора по B2B-продажам в EdTech, знакомство с карьерным центром Волгатеха, доступ к студентам для CustDev и поддержку заявки на грант „Студенческий стартап“. Спасибо! Дальше — приложение для вопросов.</p>
     </aside>
   </section>
 
   <!-- ════════════ Приложение — разделитель ════════════ -->
   <section class="slide s-divider s-app" data-label="—" data-part="app" aria-label="Приложение">
-    <div class="slide-tag anim d1"><span class="num">A</span> Для вопросов</div>
-    <div class="big anim d2">Приложение</div>
+    <div class="slide-tag anim d1">Приложение</div>
+    <div class="big anim d2">Ответы на вопросы жюри</div>
     <ol class="anim d3">
-      <li><b>A1</b> Архитектура и стек</li>
-      <li><b>A2</b> Персональные данные и 152-ФЗ</li>
-      <li><b>A3</b> Риски и как закрываем</li>
-      <li><b>A4</b> Business Model Canvas</li>
+      <li><b>1</b> Архитектура и стек</li>
+      <li><b>2</b> Персональные данные и 152-ФЗ</li>
+      <li><b>3</b> Риски и как закрываем</li>
+      <li><b>4</b> Business Model Canvas</li>
     </ol>
     <aside class="notes" data-time="—" data-total="—">
       <p>Не показываем в основном таймлайне. Открываем по вопросу жюри: точка в навигации или стрелки.</p>
     </aside>
   </section>
 
-  <!-- ════════════ A1 — Архитектура ════════════ -->
-  <section class="slide s-app" data-label="A1" data-part="app" aria-label="Архитектура и стек">
-    <div class="slide-tag anim d1"><span class="num">A1</span> Приложение</div>
+  <!-- ════════════ Приложение 1/4 — Архитектура ════════════ -->
+  <section class="slide s-app" data-label="1/4" data-part="app" aria-label="Архитектура и стек">
+    <div class="slide-tag anim d1">Приложение · <span class="num">1/4</span></div>
     <h2 class="section-title anim d2">Архитектура и стек</h2>
 
     <div class="arch vc-top anim d3">
@@ -1474,7 +1555,7 @@
       </div>
       <div class="card arch-box">
         <span class="mono-label">API</span>
-        <h4>FastAPI</h4>
+        <h4><span class="lat">FastAPI</span></h4>
         <ul>
           <li><code>web/server.py</code></li>
           <li>Вход по логину, хеш пароля PBKDF2, подписанная cookie</li>
@@ -1509,10 +1590,10 @@
     </aside>
   </section>
 
-  <!-- ════════════ A2 — Персональные данные ════════════ -->
-  <section class="slide s-app" data-label="A2" data-part="app" aria-label="Персональные данные и 152-ФЗ">
-    <div class="slide-tag anim d1"><span class="num">A2</span> Приложение</div>
-    <h2 class="section-title anim d2">Персональные данные и 152-ФЗ</h2>
+  <!-- ════════════ Приложение 2/4 — Персональные данные ════════════ -->
+  <section class="slide s-app" data-label="2/4" data-part="app" aria-label="Персональные данные и 152-ФЗ">
+    <div class="slide-tag anim d1">Приложение · <span class="num">2/4</span></div>
+    <h2 class="section-title anim d2">Персональные данные и <span class="lat">152</span>-ФЗ</h2>
 
     <div class="pd-grid vc-top">
       <div class="card pd-col keep anim d3">
@@ -1548,15 +1629,15 @@
     </aside>
   </section>
 
-  <!-- ════════════ A3 — Риски ════════════ -->
-  <section class="slide s-app" data-label="A3" data-part="app" aria-label="Риски">
-    <div class="slide-tag anim d1"><span class="num">A3</span> Приложение</div>
+  <!-- ════════════ Приложение 3/4 — Риски ════════════ -->
+  <section class="slide s-app" data-label="3/4" data-part="app" aria-label="Риски">
+    <div class="slide-tag anim d1">Приложение · <span class="num">3/4</span></div>
     <h2 class="section-title anim d2">Риски и как закрываем</h2>
 
     <div class="risk-list vc-top vc-bot">
       <div class="card risk anim d3">
         <div class="q">Оценка ответа от LLM может быть неточной</div>
-        <div class="a">Разбор по критериям (точность, структура, полнота, STAR); проверяем гипотезу «балл растёт за 2–3 сессии»</div>
+        <div class="a">Калибровка: сравниваем оценки модели с ручной разметкой ответов; разбор по критериям</div>
       </div>
       <div class="card risk anim d4">
         <div class="q">Расходы на LLM без квот: интервью доступны без входа</div>
@@ -1580,10 +1661,10 @@
     </aside>
   </section>
 
-  <!-- ════════════ A4 — BMC ════════════ -->
-  <section class="slide s-app" data-label="A4" data-part="app" aria-label="Business Model Canvas">
-    <div class="slide-tag anim d1"><span class="num">A4</span> Приложение</div>
-    <h2 class="section-title anim d2" style="margin-bottom: 24px;">Business Model Canvas</h2>
+  <!-- ════════════ Приложение 4/4 — BMC ════════════ -->
+  <section class="slide s-app" data-label="4/4" data-part="app" aria-label="Business Model Canvas">
+    <div class="slide-tag anim d1">Приложение · <span class="num">4/4</span></div>
+    <h2 class="section-title anim d2" style="margin-bottom: 24px;"><span class="lat">Business Model Canvas</span></h2>
 
     <div class="bmc anim d3">
       <div class="bmc-cell bmc-kp" style="--dot: var(--teal);">
@@ -1722,7 +1803,7 @@
     } else if (label === '—') {
       counter.innerHTML = '<span class="cur">Приложение</span>';
     } else {
-      counter.innerHTML = '<span class="cur">' + label + '</span> · приложение';
+      counter.innerHTML = 'Приложение · <span class="cur">' + label + '</span>';
     }
   }
 
@@ -1731,8 +1812,10 @@
   function renderNotes(slide) {
     const notes = slide.querySelector('.notes');
     const label = slide.dataset.label;
-    document.getElementById('npSlide').textContent =
-      (slide.getAttribute('aria-label') || '') + (label && label !== '—' ? ' · ' + label : '');
+    const name = slide.getAttribute('aria-label') || '';
+    let head = name + (label && label !== '—' ? ' · ' + label : '');
+    if (slide.dataset.part === 'app') head = label === '—' ? 'Приложение' : 'Приложение · ' + label + ' · ' + name;
+    document.getElementById('npSlide').textContent = head;
     const time = notes && notes.dataset.time && notes.dataset.time !== '—'
       ? '⏱ ' + notes.dataset.time + ' · к концу слайда ' + notes.dataset.total
       : '';
