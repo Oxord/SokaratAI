@@ -1,0 +1,1825 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sokrat — AI-тренажёр собеседований под конкретную вакансию</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@500;600;700;800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ─── Reset / base ───────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+
+  :root {
+    /* Light palette — warm off-white */
+    --bg:           #F9F6F1;
+    --bg-deeper:    #F2EDE5;
+    --card:         #FFFFFF;
+    --card-soft:    #FCFAF6;
+
+    --line:         rgba(28, 24, 40, 0.08);
+    --line-strong:  rgba(28, 24, 40, 0.14);
+    --line-dashed:  rgba(28, 24, 40, 0.18);
+
+    --ink:          #1A1A2E;
+    --ink-2:        #2A2A40;
+    --ink-mute:     #5C5C72;
+    --ink-dim:      #8B8BA3;
+
+    --accent:       #6845F0;
+    --accent-2:     #8B6DF5;
+    --accent-soft:  rgba(104, 69, 240, 0.08);
+    --accent-mid:   rgba(104, 69, 240, 0.18);
+    --accent-strong:rgba(104, 69, 240, 0.30);
+    --accent-glow:  rgba(104, 69, 240, 0.20);
+
+    --teal:         #0891B2;
+    --teal-soft:    rgba(8, 145, 178, 0.10);
+    --teal-mid:     rgba(8, 145, 178, 0.22);
+
+    --green:        #059669;
+    --green-soft:   rgba(5, 150, 105, 0.10);
+
+    --amber:        #C2620C;
+    --amber-soft:   rgba(194, 98, 12, 0.10);
+
+    --rose:         #E11D48;
+    --rose-soft:    rgba(225, 29, 72, 0.08);
+
+    /* Shadows — depth on light bg */
+    --sh-1: 0 1px 2px rgba(20, 18, 40, 0.04), 0 4px 14px -6px rgba(20, 18, 40, 0.06);
+    --sh-2: 0 2px 4px rgba(20, 18, 40, 0.05), 0 12px 28px -10px rgba(20, 18, 40, 0.10);
+    --sh-3: 0 4px 8px rgba(20, 18, 40, 0.06), 0 24px 56px -16px rgba(20, 18, 40, 0.14);
+    --sh-glow: 0 0 0 1px var(--accent-mid), 0 18px 60px -22px var(--accent-glow);
+
+    /* Type */
+    --font-display: "Syne", system-ui, sans-serif;
+    --font-body:    "Instrument Sans", system-ui, sans-serif;
+    --font-mono:    "JetBrains Mono", ui-monospace, monospace;
+
+    --r-sm: 8px;
+    --r-md: 14px;
+    --r-lg: 22px;
+    --r-xl: 28px;
+
+    /* Stage: fixed 16:9 canvas, scaled to the viewport by JS */
+    --stage-w: 1920px;
+    --stage-h: 1080px;
+    --k: 1;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 24px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    letter-spacing: -0.005em;
+    position: relative;
+  }
+
+  /* Atmosphere: subtle radial blobs + faint noise */
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(ellipse 70% 50% at 12% 8%, rgba(104, 69, 240, 0.07), transparent 60%),
+      radial-gradient(ellipse 60% 50% at 92% 96%, rgba(8, 145, 178, 0.06), transparent 60%),
+      radial-gradient(ellipse 40% 30% at 88% 12%, rgba(225, 29, 72, 0.025), transparent 70%);
+  }
+  body::after {
+    content: "";
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.35;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.08 0 0 0 0 0.18 0 0 0 0.04 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+
+  /* ─── Stage / slide system ───────────────────────────────────── */
+  .stage {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: var(--stage-w); height: var(--stage-h);
+    transform: translate(-50%, -50%) scale(var(--k));
+    transform-origin: center center;
+    z-index: 1;
+  }
+  .deck { position: absolute; inset: 0; }
+  .slide {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    padding: 110px 120px 120px;
+    opacity: 0;
+    transform: translateY(16px);
+    visibility: hidden;
+    transition:
+      opacity 450ms cubic-bezier(.22,.8,.22,1),
+      transform 450ms cubic-bezier(.22,.8,.22,1),
+      visibility 0s linear 450ms;
+    overflow: hidden;
+  }
+  .slide.active {
+    opacity: 1;
+    transform: translateY(0);
+    visibility: visible;
+    transition:
+      opacity 450ms cubic-bezier(.22,.8,.22,1),
+      transform 450ms cubic-bezier(.22,.8,.22,1),
+      visibility 0s linear 0s;
+  }
+  .slide .notes { display: none; }
+
+  /* Slide tag */
+  .slide-tag {
+    display: inline-flex; align-items: center; gap: 14px;
+    font-family: var(--font-mono);
+    font-size: 20px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    margin-bottom: 22px;
+  }
+  .slide-tag::before {
+    content: "";
+    width: 32px; height: 2px;
+    background: var(--accent);
+  }
+  .slide-tag .num { color: var(--accent); font-weight: 600; }
+
+  /* Headings */
+  h1.title {
+    font-family: var(--font-display);
+    font-size: 92px;
+    font-weight: 700;
+    line-height: 1.04;
+    letter-spacing: -0.03em;
+    color: var(--ink);
+  }
+  h1.title em, h2.section-title em {
+    font-style: normal;
+    background: linear-gradient(120deg, var(--accent) 0%, #9C7BF7 50%, var(--teal) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  h2.section-title {
+    font-family: var(--font-display);
+    font-size: 56px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    margin-bottom: 36px;
+    color: var(--ink);
+    max-width: 30ch;
+  }
+
+  /* Shared bits */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    box-shadow: var(--sh-1);
+  }
+  .mono-label {
+    font-family: var(--font-mono);
+    font-size: 20px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    font-weight: 600;
+  }
+  .src {
+    font-size: 20px;
+    color: var(--ink-mute);
+    line-height: 1.4;
+  }
+  /* Placeholder to be filled by the team: amber, dashed */
+  .ph {
+    display: inline-block;
+    background: var(--amber-soft);
+    color: var(--amber);
+    border: 2px dashed rgba(194, 98, 12, 0.45);
+    border-radius: 8px;
+    padding: 0 10px;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  /* Hypothesis / caveat plaque */
+  .plaque {
+    display: inline-flex; align-items: center; gap: 14px;
+    background: var(--amber-soft);
+    border: 1px solid rgba(194, 98, 12, 0.22);
+    color: var(--ink-2);
+    border-radius: var(--r-md);
+    padding: 16px 24px;
+    font-size: 22px;
+  }
+  .plaque::before {
+    content: "";
+    width: 12px; height: 12px; flex-shrink: 0;
+    border-radius: 999px;
+    background: var(--amber);
+    box-shadow: 0 0 0 0 rgba(194, 98, 12, 0.45);
+    animation: ping 2s ease-out infinite;
+  }
+  /* Notification-style ring: grows and fades */
+  @keyframes ping {
+    0%   { box-shadow: 0 0 0 0 rgba(194, 98, 12, 0.45); }
+    80%  { box-shadow: 0 0 0 12px rgba(194, 98, 12, 0); }
+    100% { box-shadow: 0 0 0 12px rgba(194, 98, 12, 0); }
+  }
+  .tag-hyp {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 20px;
+    color: var(--amber);
+    background: var(--amber-soft);
+    border: 1px solid rgba(194, 98, 12, 0.22);
+    border-radius: 999px;
+    padding: 4px 16px;
+  }
+  .stack-line {
+    margin-top: auto;
+    font-family: var(--font-mono);
+    font-size: 22px;
+    color: var(--ink-mute);
+    letter-spacing: 0.04em;
+  }
+  .stack-line b { color: var(--accent); font-weight: 600; }
+
+  /* Big figures: Instrument Sans with lining tabular digits (no Syne for numbers) */
+  .stat .value, .aud-stat .value, .price .amount, .cost-bar b, .rstep .n {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  /* Latin words inside Syne headings: avoid Syne's stylised a/g */
+  .lat { font-family: var(--font-body); }
+
+  /* Content-light slides: centre the body block under the title */
+  .vc-top { margin-top: auto; }
+  .vc-bot { margin-bottom: auto; }
+
+  /* ═══════════ 01 — Cover ═══════════ */
+  .s-cover { justify-content: center; align-items: center; text-align: center; }
+  .s-cover .logo-video {
+    width: 150px; height: 150px;
+    border-radius: 24px;
+    box-shadow: var(--sh-2);
+    background: var(--card);
+    margin-bottom: 40px;
+    object-fit: cover;
+  }
+  .cover-brand {
+    font-family: var(--font-mono);
+    font-size: 20px;
+    letter-spacing: 0.30em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    margin-bottom: 30px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .cover-brand .dot {
+    width: 11px; height: 11px;
+    background: var(--accent);
+    border-radius: 999px;
+    box-shadow: 0 0 0 4px var(--accent-soft), 0 0 20px var(--accent-glow);
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.55; transform: scale(0.82); }
+  }
+  .s-cover h1.title { max-width: 21ch; margin-bottom: 34px; }
+  .cover-sub {
+    color: var(--ink-mute);
+    font-size: 32px;
+    max-width: 50ch;
+    line-height: 1.4;
+  }
+  .cover-sub b { color: var(--ink); font-weight: 600; }
+
+  /* ═══════════ 02 — Problem ═══════════ */
+  .stat-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 28px;
+    margin-bottom: 28px;
+  }
+  .stat {
+    padding: 30px 36px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: 30px;
+    align-items: center;
+  }
+  .stat .value {
+    font-size: 84px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .stat.teal .value { color: var(--teal); }
+  .stat .desc { font-size: 24px; color: var(--ink); line-height: 1.35; }
+  .stat .desc .src { display: block; margin-top: 6px; }
+
+  .pain-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 28px;
+  }
+  .pain {
+    position: relative;
+    overflow: hidden;
+    padding: 40px 38px 36px;
+    min-height: 280px;
+  }
+  .pain::before {
+    content: "";
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 4px;
+    background: var(--bar-color, var(--accent));
+  }
+  .pain h3 {
+    font-family: var(--font-display);
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 1.2;
+    margin-bottom: 16px;
+  }
+  .pain p { font-size: 28px; color: var(--ink-mute); line-height: 1.45; }
+
+  /* ═══════════ 03 — Audience ═══════════ */
+  .aud-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 0.9fr;
+    gap: 28px;
+  }
+  .aud-card {
+    padding: 40px 40px 38px;
+    position: relative;
+    min-height: 340px;
+  }
+  .aud-card.focus { border-color: var(--accent-mid); box-shadow: var(--sh-glow); }
+  .aud-card .mono-label { color: var(--accent); margin-bottom: 18px; display: block; }
+  .aud-card h3 {
+    font-family: var(--font-display);
+    font-size: 46px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin-bottom: 18px;
+  }
+  .aud-card p { font-size: 30px; color: var(--ink-mute); line-height: 1.4; }
+  .aud-stat {
+    padding: 36px;
+    background: linear-gradient(120deg, var(--accent-soft), var(--teal-soft), var(--accent-soft));
+    background-size: 200% 200%;
+    animation: gradientShift 10s ease-in-out infinite alternate;
+    border-color: var(--teal-mid);
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  @keyframes gradientShift {
+    0%   { background-position: 0% 50%; }
+    100% { background-position: 100% 50%; }
+  }
+  .aud-stat .value {
+    font-size: 76px;
+    font-weight: 700;
+    color: var(--teal);
+    letter-spacing: -0.03em;
+    line-height: 1;
+    margin-bottom: 16px;
+  }
+  .aud-stat p { font-size: 24px; color: var(--ink); line-height: 1.35; }
+  .aud-stat .src { margin-top: 10px; }
+  .aud-next {
+    margin-top: 32px;
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  }
+  .chip {
+    font-size: 24px;
+    padding: 12px 24px;
+    border-radius: 999px;
+    background: var(--card);
+    border: 1px dashed var(--line-dashed);
+    color: var(--ink-2);
+  }
+  .s-aud .plaque { margin-top: 40px; align-self: flex-start; }
+
+  /* ═══════════ 04 — How it works ═══════════ */
+  .ribbon {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 16px;
+    position: relative;
+    margin-bottom: 30px;
+  }
+  .ribbon::before {
+    content: "";
+    position: absolute;
+    left: 24px; right: 24px; top: 24px;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--teal));
+    opacity: 0.45;
+  }
+  .rstep { position: relative; }
+  .rstep .n {
+    width: 48px; height: 48px;
+    border-radius: 999px;
+    display: grid; place-items: center;
+    background: var(--card);
+    border: 2px solid var(--accent);
+    color: var(--accent);
+    font-size: 22px;
+    margin-bottom: 14px;
+    position: relative;
+    box-shadow: var(--sh-1);
+  }
+  .rstep.key .n { background: var(--accent); color: #fff; box-shadow: 0 0 0 6px var(--accent-soft); }
+  .rstep h4 {
+    font-family: var(--font-display);
+    font-size: 25px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 1.15;
+    margin-bottom: 6px;
+  }
+  .rstep p { font-size: 20px; color: var(--ink-mute); line-height: 1.35; }
+
+  .shots {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    flex: 1;
+    min-height: 0;
+    margin-bottom: 20px;
+  }
+  .shot {
+    display: flex; flex-direction: column;
+    min-height: 0;
+  }
+  .shot .frame {
+    flex: 1;
+    min-height: 0;
+    border-radius: var(--r-md);
+    overflow: hidden;
+    border: 1px solid var(--line-strong);
+    background: var(--card-soft);
+    box-shadow: var(--sh-2);
+    position: relative;
+  }
+  .shot img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    object-position: top center;
+    display: block;
+  }
+  .shot .missing-note {
+    display: none;
+    position: absolute; inset: 0;
+    place-items: center;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 22px;
+    color: var(--ink-dim);
+    border: 3px dashed var(--line-dashed);
+    border-radius: var(--r-md);
+  }
+  .shot.missing img { display: none; }
+  .shot.missing .missing-note { display: grid; }
+  .shot figcaption {
+    margin-top: 12px;
+    font-size: 22px;
+    color: var(--ink-2);
+  }
+  .shot figcaption b { color: var(--accent); font-family: var(--font-mono); font-weight: 600; margin-right: 8px; }
+
+  /* ═══════════ 05 — Demo ═══════════ */
+  .s-demo { align-items: center; }
+  .s-demo .slide-tag, .s-demo h2 { align-self: flex-start; }
+  .browser {
+    width: 1300px;
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    background: var(--card);
+    border: 1px solid var(--line-strong);
+    box-shadow: var(--sh-3);
+  }
+  .browser-bar {
+    height: 44px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 18px;
+    background: var(--card-soft);
+    border-bottom: 1px solid var(--line);
+  }
+  .browser-bar span { width: 13px; height: 13px; border-radius: 999px; background: var(--line-strong); }
+  .video-box {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    width: 100%;
+    max-height: 640px;
+    background: var(--bg-deeper);
+  }
+  .video-box video { width: 100%; height: 100%; display: block; background: #111; object-fit: contain; }
+  .video-ph {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    text-align: center;
+    background:
+      radial-gradient(ellipse 60% 60% at 50% 50%, var(--accent-soft), transparent 70%),
+      var(--bg-deeper);
+    pointer-events: none;
+    transition: opacity 300ms ease;
+  }
+  .video-ph .play {
+    width: 110px; height: 110px;
+    margin: 0 auto 26px;
+    border-radius: 999px;
+    background: var(--accent);
+    box-shadow: 0 0 0 12px var(--accent-soft), var(--sh-glow);
+    display: grid; place-items: center;
+  }
+  .video-ph .play::after {
+    content: "";
+    border-left: 34px solid #fff;
+    border-top: 21px solid transparent;
+    border-bottom: 21px solid transparent;
+    margin-left: 8px;
+  }
+  .video-ph .cap { font-family: var(--font-display); font-size: 34px; font-weight: 700; color: var(--ink); }
+  .video-ph .file { font-family: var(--font-mono); font-size: 20px; color: var(--ink-dim); margin-top: 10px; }
+  .video-box.playing .video-ph { opacity: 0; }
+  .video-box:not(.missing) .video-ph .file { display: none; }
+  .demo-cap { margin-top: 18px; font-size: 22px; color: var(--ink-mute); }
+  .demo-ctrl {
+    width: 1300px; margin-top: 16px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .demo-ctrl .grow { flex: 1; }
+  .demo-ctrl button {
+    font: 600 18px/1 var(--font-body, inherit);
+    padding: 10px 18px;
+    border-radius: 999px;
+    border: 1px solid var(--line-strong);
+    background: var(--card);
+    color: var(--ink);
+    cursor: pointer;
+    transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+  }
+  .demo-ctrl button:hover { border-color: var(--accent-mid); background: var(--accent-soft); }
+  .demo-ctrl button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .demo-ctrl .speed { font-family: var(--font-mono); min-width: 64px; }
+
+  /* ═══════════ 06 — Competitors ═══════════ */
+  .comp-wrap { overflow: hidden; padding: 0; }
+  .comp-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .comp-table th, .comp-table td {
+    padding: 15px 18px;
+    border-bottom: 1px solid var(--line);
+    text-align: center;
+    vertical-align: middle;
+  }
+  .comp-table th {
+    background: var(--card-soft);
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--ink-2);
+    line-height: 1.25;
+  }
+  .comp-table th:first-child, .comp-table td:first-child {
+    text-align: left;
+    width: 27%;
+    font-size: 23px;
+    color: var(--ink);
+  }
+  .comp-table td { font-size: 24px; }
+  .comp-table tbody tr:last-child td { border-bottom: none; }
+  .comp-table .us {
+    background: var(--accent-soft);
+    border-left: 2px solid var(--accent-mid);
+    border-right: 2px solid var(--accent-mid);
+  }
+  .comp-table th.us {
+    color: var(--accent);
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 700;
+  }
+  .ck { font-size: 28px; line-height: 1; font-weight: 700; }
+  .ck.yes  { color: var(--green); }
+  .ck.part { color: var(--amber); }
+  .ck.no   { color: var(--ink-dim); }
+  .comp-legend {
+    margin-top: 16px;
+    display: flex; align-items: center; justify-content: space-between; gap: 30px;
+    font-size: 22px;
+    color: var(--ink-2);
+  }
+  .comp-legend .ck { font-size: 24px; margin-right: 8px; }
+  .comp-legend .dot { margin: 0 16px; color: var(--ink-dim); }
+  .comp-foot {
+    margin-top: 24px;
+    display: flex; align-items: center; justify-content: space-between; gap: 30px;
+  }
+  .pos-banner {
+    padding: 18px 28px;
+    border-radius: var(--r-md);
+    background: linear-gradient(90deg, var(--rose-soft), var(--accent-soft));
+    border: 1px solid var(--accent-mid);
+    font-size: 24px;
+    color: var(--ink);
+  }
+  .pos-banner b { color: var(--accent); }
+
+  /* ═══════════ 07 — Business model ═══════════ */
+  .bm-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: stretch;
+  }
+  .bm-col { padding: 32px 36px; display: flex; flex-direction: column; }
+  .bm-col .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; min-height: 40px; }
+  .bm-col .head .mono-label { color: var(--accent); }
+  .bm-col.b2b .head .mono-label { color: var(--teal); }
+  .prices { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; flex: 1; }
+  .price {
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-md);
+    padding: 30px 30px;
+    background: var(--card-soft);
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .price .what { font-size: 26px; font-weight: 600; color: var(--ink); line-height: 1.25; margin-bottom: 18px; }
+  .price .amount {
+    font-size: 88px;
+    letter-spacing: -0.03em;
+    color: var(--accent);
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .price.alt .amount { color: var(--teal); }
+  .price .line { margin-top: 18px; font-size: 22px; color: var(--ink-mute); line-height: 1.35; }
+
+  .b2b-rows { display: flex; flex-direction: column; gap: 20px; flex: 1; justify-content: space-between; }
+  .b2b-row { display: grid; grid-template-columns: 52px 1fr; gap: 18px; align-items: start; font-size: 25px; line-height: 1.35; color: var(--ink-2); }
+  .b2b-row b { color: var(--ink); font-weight: 600; }
+  .b2b-row .ic {
+    width: 52px; height: 52px;
+    border-radius: 14px;
+    display: grid; place-items: center;
+    background: var(--teal-soft);
+    border: 1px solid var(--teal-mid);
+    color: var(--teal);
+  }
+  .b2b-flow {
+    margin-top: 14px;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr auto 1fr;
+    align-items: center;
+    gap: 12px;
+  }
+  .b2b-flow .stepbox {
+    text-align: center;
+    padding: 16px 12px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--teal-mid);
+    background: var(--teal-soft);
+    color: var(--ink);
+    font-size: 24px;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+  .b2b-flow .stepbox.last { background: var(--teal); border-color: var(--teal); color: #fff; }
+  .b2b-flow .arr { color: var(--teal); font-size: 30px; font-weight: 700; }
+  .cost-bar {
+    margin-top: 28px;
+    padding: 22px 30px;
+    display: flex; align-items: center; gap: 24px;
+    font-size: 26px;
+    border-color: rgba(5, 150, 105, 0.22);
+    background: linear-gradient(90deg, var(--green-soft), var(--card) 60%);
+  }
+  .cost-bar .mono-label { color: var(--green); }
+  .cost-bar b { font-size: 34px; color: var(--green); }
+
+  /* ═══════════ 08 — Validation ═══════════ */
+  .val-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: stretch; }
+  .val-col { padding: 36px 38px; }
+  .val-col.done { display: flex; flex-direction: column; }
+  .val-col.done .val-list { flex: 1; display: flex; flex-direction: column; justify-content: space-evenly; }
+  .val-next { display: flex; flex-direction: column; gap: 16px; }
+  .val-next > .mono-label { color: var(--teal); padding: 0 4px 4px; }
+  .hyp { padding: 22px 28px; border-left: 4px solid var(--teal); }
+  .hyp .mono-label { color: var(--teal); display: block; margin-bottom: 8px; }
+  .hyp .text { font-size: 26px; line-height: 1.32; color: var(--ink); }
+  .hyp .how { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 22px; color: var(--ink-mute); line-height: 1.35; }
+  .val-col .mono-label { display: block; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+  .val-col.done .mono-label { color: var(--green); }
+  .val-col.next .mono-label { color: var(--teal); }
+  .val-list { list-style: none; counter-reset: hyp; }
+  .val-list li {
+    position: relative;
+    padding: 22px 0 22px 58px;
+    font-size: 31px;
+    line-height: 1.35;
+    border-bottom: 1px solid var(--line);
+  }
+  .val-list li:last-child { border-bottom: none; }
+  .val-col.done li::before {
+    content: "✓";
+    position: absolute; left: 0; top: 24px;
+    width: 38px; height: 38px; border-radius: 999px;
+    display: grid; place-items: center;
+    background: var(--green-soft); color: var(--green);
+    font-weight: 700; font-size: 22px;
+  }
+  .val-col.next li { counter-increment: hyp; }
+  .val-col.next li::before {
+    content: counter(hyp);
+    position: absolute; left: 0; top: 24px;
+    width: 38px; height: 38px; border-radius: 999px;
+    display: grid; place-items: center;
+    background: var(--teal-soft); color: var(--teal);
+    font-family: var(--font-mono); font-weight: 600; font-size: 20px;
+  }
+
+  /* ═══════════ 09 — Roadmap ═══════════ */
+  .timeline {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 28px;
+  }
+  .timeline::before {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; top: 17px;
+    height: 4px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 45%, var(--teal) 75%, transparent 100%);
+  }
+  .tl-item .dotm {
+    width: 38px; height: 38px;
+    border-radius: 999px;
+    background: var(--card);
+    border: 4px solid var(--accent);
+    box-shadow: 0 0 0 8px var(--accent-soft);
+    position: relative;
+    margin-bottom: 34px;
+  }
+  .tl-item:nth-child(2) .dotm { border-color: var(--accent-2); }
+  .tl-item:nth-child(3) .dotm { border-color: var(--teal); box-shadow: 0 0 0 8px var(--teal-soft); }
+  .tl-item.later .dotm { border-style: dashed; border-color: var(--ink-dim); box-shadow: none; }
+  .tl-card { padding: 30px 30px 32px; min-height: 380px; }
+  .tl-item.later .tl-card { border-style: dashed; border-color: var(--line-dashed); background: var(--card-soft); box-shadow: none; }
+  .tl-when {
+    font-family: var(--font-body);
+    font-size: 30px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+    margin-bottom: 16px;
+  }
+  .tl-item:nth-child(2) .tl-when { color: var(--accent-2); }
+  .tl-item:nth-child(3) .tl-when { color: var(--teal); }
+  .tl-item.later .tl-when { color: var(--ink-mute); }
+  .tl-card ul { list-style: none; }
+  .tl-card li {
+    font-size: 28px;
+    line-height: 1.35;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .tl-card li:last-child { border-bottom: none; }
+
+  /* ═══════════ 10 — Team & ask ═══════════ */
+  .team-grid { display: grid; grid-template-columns: 1fr 1.05fr; gap: 40px; align-items: center; }
+  .people { display: flex; flex-direction: column; gap: 18px; }
+  .person {
+    display: flex; align-items: center; gap: 26px;
+    padding: 20px 26px;
+  }
+  .person .av {
+    width: 104px; height: 104px;
+    border-radius: 999px;
+    overflow: hidden;
+    flex-shrink: 0;
+    box-shadow: 0 6px 20px -6px rgba(20, 18, 40, 0.25);
+  }
+  .person .av img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .person:nth-child(1) .av { background: linear-gradient(135deg, #6845F0, #8B6DF5); }
+  .person:nth-child(2) .av { background: linear-gradient(135deg, #0891B2, #38BDF8); }
+  .person:nth-child(3) .av { background: linear-gradient(135deg, #059669, #22C55E); }
+  .person .name {
+    font-family: var(--font-display);
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 1.1;
+    margin-bottom: 4px;
+  }
+  .person .role { font-size: 24px; color: var(--ink-mute); }
+  .edu {
+    margin-top: 8px;
+    font-family: var(--font-mono);
+    font-size: 22px;
+    color: var(--ink-mute);
+    letter-spacing: 0.04em;
+  }
+  /* Deep teal end (#0E7490) keeps white text above 4.5:1 across the gradient */
+  .ask {
+    padding: 36px 40px;
+    border-color: transparent;
+    box-shadow: var(--sh-3);
+    background: linear-gradient(135deg, #6845F0 0%, #0E7490 100%);
+    color: #FFFFFF;
+  }
+  .ask .mono-label { color: rgba(255, 255, 255, 0.88); display: block; margin-bottom: 14px; }
+  .ask ul { list-style: none; }
+  .ask li {
+    position: relative;
+    padding: 18px 0 18px 46px;
+    font-size: 28px;
+    line-height: 1.3;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.22);
+  }
+  .ask li:last-child { border-bottom: none; }
+  .ask li::before {
+    content: "→";
+    position: absolute; left: 0; top: 17px;
+    color: #FFFFFF;
+    font-weight: 700;
+  }
+
+  /* ═══════════ Appendix divider ═══════════ */
+  .s-divider { justify-content: center; }
+  .s-divider .big {
+    font-family: var(--font-display);
+    font-size: 104px;
+    font-weight: 700;
+    letter-spacing: -0.035em;
+    line-height: 1;
+    margin-bottom: 50px;
+  }
+  .s-divider ol { list-style: none; display: grid; grid-template-columns: 1fr; gap: 16px; max-width: 1300px; }
+  .s-divider li { font-size: 30px; display: flex; gap: 18px; align-items: baseline; }
+  .s-divider li b { font-family: var(--font-mono); color: var(--teal); font-weight: 600; }
+  .s-app .slide-tag .num { color: var(--teal); }
+  .s-app .slide-tag::before { background: var(--teal); }
+
+  /* ═══════════ Appendix 1/3 — Architecture ═══════════ */
+  .arch {
+    display: grid;
+    grid-template-columns: 0.8fr 0.9fr 1.35fr 1.1fr;
+    gap: 22px;
+    align-items: stretch;
+  }
+  .arch-box { padding: 26px 26px 24px; position: relative; }
+  .arch-box .mono-label { display: block; margin-bottom: 12px; color: var(--accent); }
+  .arch-box.ext .mono-label { color: var(--teal); }
+  .arch-box h4 { font-family: var(--font-display); font-size: 28px; font-weight: 700; margin-bottom: 10px; line-height: 1.15; }
+  .arch-box p, .arch-box li { font-size: 23px; color: var(--ink-2); line-height: 1.35; }
+  .arch-box ul { list-style: none; }
+  .arch-box li { padding: 7px 0; border-bottom: 1px solid var(--line); }
+  .arch-box li:last-child { border-bottom: none; }
+  .arch-box code { font-family: var(--font-mono); font-size: 20px; color: var(--accent); }
+  .arch-box:not(:last-child)::after {
+    content: "→";
+    position: absolute;
+    right: -20px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent);
+    font-size: 26px; font-weight: 700;
+    z-index: 2;
+  }
+  .arch-store {
+    margin-top: 24px;
+    padding: 20px 28px;
+    font-size: 22px;
+    color: var(--ink-2);
+    display: flex; gap: 22px; align-items: center;
+  }
+  .arch-store .mono-label { flex-shrink: 0; }
+
+  /* ═══════════ Appendix 2/3 — Personal data ═══════════ */
+  .pd-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; }
+  .pd-col { padding: 30px 32px; }
+  .pd-col .mono-label { display: block; margin-bottom: 14px; }
+  .pd-col.keep .mono-label { color: var(--accent); }
+  .pd-col.cut  .mono-label { color: var(--green); }
+  .pd-col.plan .mono-label { color: var(--amber); }
+  .pd-col.plan { border-style: dashed; border-color: rgba(194, 98, 12, 0.35); }
+  .pd-col ul { list-style: none; }
+  .pd-col li { font-size: 23px; line-height: 1.35; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .pd-col li:last-child { border-bottom: none; }
+  .pd-note { margin-top: 26px; }
+
+  /* ═══════════ Appendix 3/3 — Risks ═══════════ */
+  .risk-list { display: flex; flex-direction: column; gap: 16px; }
+  .risk {
+    display: grid;
+    grid-template-columns: 0.9fr 1.1fr;
+    gap: 32px;
+    padding: 20px 28px;
+    align-items: center;
+  }
+  .risk .q { font-size: 24px; font-weight: 600; color: var(--ink); display: flex; gap: 14px; }
+  .risk .q::before { content: "⚠"; color: var(--amber); }
+  .risk .a { font-size: 22px; color: var(--ink-2); line-height: 1.35; padding-left: 28px; border-left: 2px solid var(--accent-mid); }
+
+  /* ═══════════ Chrome (brand, counter, progress) — inside the stage ═══════════ */
+  .brand-mark, .counter {
+    position: absolute;
+    top: 36px;
+    font-family: var(--font-mono);
+    font-size: 20px;
+    letter-spacing: 0.24em;
+    color: var(--ink-mute);
+    text-transform: uppercase;
+    z-index: 50;
+    background: var(--card);
+    border: 1px solid var(--line);
+    padding: 8px 18px;
+    border-radius: 999px;
+    box-shadow: var(--sh-1);
+    font-weight: 600;
+  }
+  .brand-mark { left: 48px; display: flex; align-items: center; gap: 12px; }
+  .brand-mark .sq {
+    width: 10px; height: 10px;
+    background: var(--accent);
+    transform: rotate(45deg);
+    box-shadow: 0 0 10px var(--accent-glow);
+  }
+  .counter { right: 48px; font-weight: 500; letter-spacing: 0.16em; }
+  .counter .cur { color: var(--ink); font-weight: 700; }
+  .counter.app .cur { color: var(--teal); }
+
+  .progress {
+    position: absolute;
+    bottom: 34px; left: 50%;
+    transform: translateX(-50%);
+    display: flex; gap: 10px;
+    z-index: 50;
+    align-items: center;
+    background: var(--card);
+    border: 1px solid var(--line);
+    padding: 10px 16px;
+    border-radius: 999px;
+    box-shadow: var(--sh-2);
+  }
+  .progress button {
+    width: 10px; height: 10px;
+    background: rgba(28, 24, 40, 0.18);
+    border: none; padding: 0;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 280ms cubic-bezier(.22,.8,.22,1);
+  }
+  .progress button:hover { background: var(--ink-dim); }
+  .progress button.active {
+    background: var(--accent);
+    width: 26px;
+    box-shadow: 0 0 10px var(--accent-glow);
+  }
+  .progress button.app { width: 8px; height: 8px; }
+  .progress button.app.active { background: var(--teal); width: 22px; box-shadow: none; }
+  .progress .sep { width: 1px; height: 16px; background: var(--line-strong); margin: 0 4px; }
+
+  /* Viewport-level hint (not scaled) */
+  .hint {
+    position: fixed;
+    bottom: 14px; right: 18px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-mute);
+    letter-spacing: 0.08em;
+    z-index: 60;
+    display: flex; gap: 14px;
+    opacity: 0.75;
+  }
+  .hint kbd {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    box-shadow: var(--sh-1);
+  }
+
+  /* ─── Speaker notes (toggle with N) ───────────────────────────── */
+  .notes-panel {
+    display: none;
+    position: fixed;
+    left: 50%; bottom: 16px;
+    transform: translateX(-50%);
+    width: min(1100px, calc(100vw - 32px));
+    max-height: 34vh;
+    overflow: auto;
+    z-index: 70;
+    background: rgba(26, 26, 46, 0.94);
+    color: #F4F1FF;
+    border-radius: 16px;
+    padding: 18px 24px 20px;
+    box-shadow: var(--sh-3);
+    font-size: 20px;
+    line-height: 1.5;
+  }
+  .notes-on .notes-panel { display: block; }
+  .notes-panel .np-head {
+    display: flex; justify-content: space-between; gap: 20px;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #B9A8FF;
+    margin-bottom: 8px;
+  }
+  .notes-panel p + p { margin-top: 8px; }
+  .notes-panel .ph { background: rgba(194, 98, 12, 0.25); color: #FFC58A; border-color: rgba(255, 197, 138, 0.5); }
+
+  /* ─── Animations ──────────────────────────────────────────────── */
+  .slide.active .anim { animation: fadeUp 520ms cubic-bezier(.22,.8,.22,1) both; }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .anim.d1 { animation-delay:  80ms; }
+  .anim.d2 { animation-delay: 160ms; }
+  .anim.d3 { animation-delay: 240ms; }
+  .anim.d4 { animation-delay: 320ms; }
+  .anim.d5 { animation-delay: 400ms; }
+  .anim.d6 { animation-delay: 480ms; }
+  .anim.d7 { animation-delay: 560ms; }
+  .anim.d8 { animation-delay: 640ms; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+
+  /* ─── Print: one slide per landscape page, 297×210 mm ───────── */
+  @page { size: 297mm 210mm; margin: 0; }
+  @media print {
+    html, body { height: auto; overflow: visible; background: var(--bg); }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+    body::before, body::after, .hint, .notes-panel, .progress, .counter, .brand-mark { display: none !important; }
+    .stage { position: static; transform: none; width: auto; height: auto; }
+    .deck { position: static; }
+    .slide {
+      position: relative;
+      inset: auto;
+      opacity: 1 !important;
+      visibility: visible !important;
+      transform: none !important;
+      transition: none !important;
+      box-sizing: content-box;
+      width: calc(var(--stage-w) - 240px);
+      height: calc(var(--stage-h) - 230px);
+      /* 1920px × 0.5845 ≈ 297 mm; cream borders centre the 16:9 slide on 210 mm */
+      zoom: 0.5845;
+      border-top: 137px solid var(--bg);
+      border-bottom: 137px solid var(--bg);
+      background: var(--bg);
+      break-after: page;
+      page-break-after: always;
+      break-inside: avoid;
+    }
+    .slide:last-child { break-after: auto; page-break-after: auto; }
+    .anim { animation: none !important; opacity: 1 !important; transform: none !important; }
+    .video-box video { visibility: hidden; }
+    .video-box .video-ph { opacity: 1 !important; }
+  }
+</style>
+</head>
+<body>
+
+<main class="stage" id="stage">
+
+<div class="brand-mark"><span class="sq"></span>SOKRAT</div>
+<div class="counter" id="counter"><span class="cur" id="curN">01</span> / 10</div>
+
+<div class="deck">
+
+  <!-- ════════════ 01 — Обложка ════════════ -->
+  <section class="slide s-cover active" data-label="01" aria-label="Обложка">
+    <video class="logo-video anim d1" autoplay loop muted playsinline aria-hidden="true">
+      <source src="{{LOGO_VIDEO}}" type="video/mp4">
+    </video>
+    <div class="cover-brand anim d1"><span class="dot"></span>Sokrat · Волгатех</div>
+    <h1 class="title anim d2">Репетиция <em>именно того</em> собеседования, на которое ты идёшь</h1>
+    <p class="cover-sub anim d3"><b>Sokrat</b> — AI-тренажёр собеседований под конкретную вакансию, компанию и твоё резюме</p>
+    <aside class="notes" data-time="0:20" data-total="0:20">
+      <p>Мы — команда Sokrat из Волгатеха. Делаем так, чтобы джун приходил на собеседование не в первый раз.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ 02 — Проблема ════════════ -->
+  <section class="slide s-problem" data-label="02" aria-label="Проблема">
+    <div class="slide-tag anim d1"><span class="num">02</span> Проблема</div>
+    <h2 class="section-title anim d2">Собеседование для джуна — редкий шанс. И провалить его дорого</h2>
+
+    <div class="stat-row vc-top">
+      <div class="card stat anim d3">
+        <div class="value">8 → 19</div>
+        <div class="desc">резюме на junior-вакансию в IT, 2021→2025
+          <span class="src">Инк., исследование «Зерокодера» на данных hh.ru, 2026</span></div>
+      </div>
+      <div class="card stat teal anim d4">
+        <div class="value">24,4</div>
+        <div class="desc">резюме на вакансию в IT, июль 2026
+          <span class="src">hh.индекс</span></div>
+      </div>
+    </div>
+
+    <div class="pain-grid vc-bot">
+      <div class="card pain anim d5" style="--bar-color: var(--accent);">
+        <h3>Готовятся по абстрактным спискам</h3>
+        <p>а спрашивают про стек и задачи конкретной компании</p>
+      </div>
+      <div class="card pain anim d6" style="--bar-color: var(--teal);">
+        <h3>Живой <span class="lat">mock</span>-собес дорогой</h3>
+        <p>и его не повторишь пять раз</p>
+      </div>
+      <div class="card pain anim d7" style="--bar-color: var(--rose);">
+        <h3><span class="lat">ChatGPT</span> ответит на вопросы</h3>
+        <p>но сценарий, оценку и прогресс придётся выстраивать самому</p>
+      </div>
+    </div>
+    <aside class="notes" data-time="0:45" data-total="1:05">
+      <p>Конкуренция за junior-вакансию за 2021→2025 выросла с 8 до 19 резюме на место — это исследование «Зерокодера» на данных hh.ru (Инк., 2026). По hh.индексу в июле 2026 в IT приходится 24,4 резюме на вакансию. Собеседование стало редким шансом, и провалить его дорого.</p>
+      <p>При этом готовятся вслепую: по общим спискам вопросов, через дорогой живой mock-собес, который не повторишь пять раз, или через ChatGPT: он ответит на вопросы, но сценарий, оценку и прогресс придётся выстраивать самому.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ 03 — ЦА ════════════ -->
+  <section class="slide s-aud" data-label="03" aria-label="Целевая аудитория">
+    <div class="slide-tag anim d1"><span class="num">03</span> Целевая аудитория</div>
+    <h2 class="section-title anim d2">Для кого Sokrat</h2>
+
+    <div class="aud-grid vc-top">
+      <div class="card aud-card focus anim d3">
+        <span class="mono-label">Фокус MVP</span>
+        <h3><span class="lat">Junior IT</span></h3>
+        <p>Первое собеседование — чёрный ящик</p>
+      </div>
+      <div class="card aud-card focus anim d4">
+        <span class="mono-label">Фокус MVP</span>
+        <h3>Карьерный переход</h3>
+        <p>Знания есть — продать себя пока не умеют</p>
+      </div>
+      <div class="card aud-stat anim d5">
+        <div class="value">300 000+</div>
+        <p>студентов IT выйдут на рынок в <span style="white-space: nowrap;">2026–2029</span></p>
+        <div class="src">оценка «Зерокодера»</div>
+      </div>
+    </div>
+
+    <div class="aud-next anim d6">
+      <span class="mono-label">Дальше</span>
+      <span class="chip">Студенты старших курсов</span>
+      <span class="chip">Опытные специалисты после перерыва</span>
+    </div>
+
+    <div class="plaque vc-bot anim d7">Доли сегментов и готовность платить — гипотеза, проверяем в CustDev</div>
+    <aside class="notes" data-time="0:30" data-total="1:35">
+      <p>Фокус MVP — два сегмента: джуны в IT, для которых первое собеседование — чёрный ящик, и люди в карьерном переходе: знания есть, а продать себя пока не умеют. Дальше — студенты старших курсов и опытные специалисты после перерыва.</p>
+      <p>По оценке «Зерокодера», в 2026–2029 на рынок выйдут 300 000+ студентов IT. Доли сегментов и готовность платить мы пока не утверждаем — это гипотеза, проверяем в CustDev.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ 04 — Как работает ════════════ -->
+  <section class="slide s-how" data-label="04" aria-label="Как работает">
+    <div class="slide-tag anim d1"><span class="num">04</span> Как работает</div>
+    <h2 class="section-title anim d2" style="max-width: none; margin-bottom: 30px;">Вакансия → твоё персональное интервью → план</h2>
+
+    <div class="ribbon anim d3">
+      <div class="rstep"><div class="n">1</div><h4>Вакансия</h4><p>ссылка или текст: Хабр Карьера и другие сайты</p></div>
+      <div class="rstep"><div class="n">2</div><h4>Профиль компании</h4><p>по данным hh.ru, сайта компании и вакансии</p></div>
+      <div class="rstep key"><div class="n">3</div><h4>Резюме →<br><span class="lat">gap</span>-анализ</h4><p>что из требований уже есть, а чего не хватает</p></div>
+      <div class="rstep"><div class="n">4</div><h4>Интервью под вакансию</h4><p>персона интервьюера, стресс-режим, RU/EN</p></div>
+      <div class="rstep"><div class="n">5</div><h4>Разбор каждого ответа</h4><p>точность, структура, полнота, STAR</p></div>
+      <div class="rstep key"><div class="n">6</div><h4>Индекс готовности</h4><p>и план подготовки на 7 дней</p></div>
+    </div>
+
+    <div class="shots anim d4">
+      <figure class="shot">
+        <div class="frame">
+          <img src="assets/step3.png" alt="Gap-анализ: резюме против требований вакансии" onerror="this.closest('.shot').classList.add('missing')">
+          <div class="missing-note">assets/step3.png<br>скриншот gap-анализа</div>
+        </div>
+        <figcaption><b>3</b>Gap-анализ: резюме ↔ вакансия</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="frame">
+          <img src="assets/step6.png" alt="Отчёт: индекс готовности и план на 7 дней" onerror="this.closest('.shot').classList.add('missing')">
+          <div class="missing-note">assets/step6.png<br>скриншот отчёта</div>
+        </div>
+        <figcaption><b>6</b>Отчёт: индекс готовности и план на 7 дней</figcaption>
+      </figure>
+    </div>
+
+    <div class="stack-line anim d5"><b>DeepSeek</b> · <b>FastAPI</b> · ≈1–2 ₽ LLM на сессию (оценка)</div>
+    <aside class="notes" data-time="0:45" data-total="2:20">
+      <p>Путь пользователя: вставляет ссылку на вакансию или её текст → Sokrat собирает профиль компании → по резюме делает gap-анализ против требований вакансии → проводит интервью под эту вакансию: с персоной интервьюера, стресс-режимом, на русском или английском → разбирает каждый ответ по точности, структуре, полноте и STAR → выдаёт индекс готовности и план на 7 дней.</p>
+      <p>На экране два ключевых экрана: gap-анализ и отчёт. Под капотом DeepSeek и FastAPI; LLM обходится примерно в 1–2 рубля на сессию — это оценка.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ 05 — Демо ════════════ -->
+  <section class="slide s-demo" data-label="05" aria-label="Демо">
+    <div class="slide-tag anim d1"><span class="num">05</span> Демо</div>
+    <div class="browser anim d2">
+      <div class="browser-bar"><span></span><span></span><span></span></div>
+      <div class="video-box" id="demoBox">
+        <video id="demoVideo" src="assets/demo.webm" controls muted preload="metadata"></video>
+        <div class="video-ph">
+          <div>
+            <div class="play"></div>
+            <div class="cap">Демо: от вакансии до плана подготовки (ускорено ×4)</div>
+            <div class="file">assets/demo.webm</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="demo-ctrl anim d3" id="demoCtrl">
+      <button type="button" class="chapter" data-t="3">Вакансия</button>
+      <button type="button" class="chapter" data-t="13">Gap-анализ</button>
+      <button type="button" class="chapter" data-t="35">Интервью</button>
+      <button type="button" class="chapter" data-t="246">Отчёт</button>
+      <span class="grow"></span>
+      <button type="button" class="speed active" data-rate="4">×4</button>
+      <button type="button" class="speed" data-rate="1">×1</button>
+    </div>
+    <div class="demo-cap anim d3">Демо: от вакансии до плана подготовки (ускорено ×4)</div>
+    <aside class="notes" data-time="1:00" data-total="3:20">
+      <p>Запускаю видео (клик по плееру). Комментирую по ходу: вставили вакансию → Sokrat собрал профиль компании → загрузили резюме, видим gap → пара вопросов интервью и разбор ответа → отчёт с индексом готовности и планом на 7 дней.</p>
+      <p>Клик по главе — прыжок к экрану; ×1 — если жюри попросит подробнее. Ответы в демо — тестового кандидата, сгенерированы для показа.</p>
+      <p>Если видео не запускается — возвращаюсь на слайд 4 (←) и рассказываю по скриншотам.</p>
+      <p>Тайминг: при ×4 видео ~1:09 — через ~15 с интервью кликаю главу „Отчёт“.</p>
+      <p>Если спросят про „Динамику“ 38→42→67→60: это прогоны разработчика на тестовых данных, не пользователи. Доказательством роста не считаем — гипотезу проверяем на первых пользователях в декабре.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ 06 — Конкуренты ════════════ -->
+  <section class="slide s-comp" data-label="06" aria-label="Конкуренты">
+    <div class="slide-tag anim d1"><span class="num">06</span> Конкуренты</div>
+    <h2 class="section-title anim d2" style="margin-bottom: 28px;">Вопросы задают многие. К конкретной вакансии готовит <em>Sokrat</em></h2>
+
+    <div class="card comp-wrap anim d3">
+      <table class="comp-table">
+        <thead>
+          <tr>
+            <th></th>
+            <th>ChatGPT / YandexGPT</th>
+            <th>Тренажёр Т1</th>
+            <th>Final Round AI</th>
+            <th>Суфлёры (ENIGMA, Qompanion)</th>
+            <th class="us">Sokrat</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Русский язык</td><td><span class="ck yes">✓</span></td><td><span class="ck yes">✓</span></td><td><span class="ck part">◐</span></td><td><span class="ck yes">✓</span></td><td class="us"><span class="ck yes">✓</span></td></tr>
+          <tr><td>Интервью под вакансию</td><td><span class="ck part">◐</span></td><td><span class="ck no">✕</span></td><td><span class="ck yes">✓</span></td><td><span class="ck no">✕</span></td><td class="us"><span class="ck yes">✓</span></td></tr>
+          <tr><td>Профиль компании</td><td><span class="ck part">◐</span></td><td><span class="ck no">✕</span></td><td><span class="ck no">✕</span></td><td><span class="ck no">✕</span></td><td class="us"><span class="ck yes">✓</span></td></tr>
+          <tr><td>Gap резюме ↔ вакансия</td><td><span class="ck part">◐</span></td><td><span class="ck part">◐</span></td><td><span class="ck part">◐</span></td><td><span class="ck no">✕</span></td><td class="us"><span class="ck yes">✓</span></td></tr>
+          <tr><td>Индекс готовности и план</td><td><span class="ck no">✕</span></td><td><span class="ck no">✕</span></td><td><span class="ck part">◐</span></td><td><span class="ck no">✕</span></td><td class="us"><span class="ck yes">✓</span></td></tr>
+          <tr><td>Прогресс между сессиями</td><td><span class="ck no">✕</span></td><td><span class="ck part">◐</span></td><td><span class="ck part">◐</span></td><td><span class="ck no">✕</span></td><td class="us"><span class="ck yes">✓</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="comp-legend anim d4">
+      <span class="legend"><span class="ck yes">✓</span> есть<span class="dot">·</span><span class="ck part">◐</span> частично или вручную<span class="dot">·</span><span class="ck no">✕</span> нет</span>
+      <span class="src">По открытым описаниям сервисов, октябрь 2026</span>
+    </div>
+
+    <div class="comp-foot anim d5">
+      <div class="pos-banner">Суфлёры помогают обмануть на собеседовании. <b>Sokrat помогает к нему подготовиться.</b></div>
+    </div>
+    <aside class="notes" data-time="0:40" data-total="4:00">
+      <p>Вопросы для собеседования сегодня задают многие: ChatGPT и YandexGPT, Тренажёр Т1, Final Round AI. Но к конкретной вакансии — с профилем компании, gap-анализом резюме, индексом готовности и прогрессом между сессиями — готовит Sokrat. ChatGPT может почти всё — но вручную: без сценария, оценки и прогресса.</p>
+      <p>Отдельно — суфлёры вроде ENIGMA и Qompanion: они помогают обмануть на собеседовании, Sokrat помогает к нему подготовиться. Сравнение — по открытым описаниям сервисов на октябрь 2026.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ 07 — Бизнес-модель ════════════ -->
+  <section class="slide s-bm" data-label="07" aria-label="Бизнес-модель">
+    <div class="slide-tag anim d1"><span class="num">07</span> Бизнес-модель</div>
+    <h2 class="section-title anim d2">Бизнес-модель</h2>
+
+    <div class="bm-grid vc-top">
+      <div class="card bm-col anim d3">
+        <div class="head"><span class="mono-label">B2C</span><span class="tag-hyp">гипотеза, проверяем в CustDev</span></div>
+        <div class="prices">
+          <div class="price">
+            <div class="what">Пакет 5 интервью</div>
+            <div class="amount">490 ₽</div>
+            <div class="line">5 интервью под любые вакансии</div>
+          </div>
+          <div class="price alt">
+            <div class="what">30 дней безлимита</div>
+            <div class="amount">990 ₽</div>
+            <div class="line">Безлимит на время поиска работы</div>
+          </div>
+        </div>
+      </div>
+      <div class="card bm-col b2b anim d4">
+        <div class="head"><span class="mono-label">B2B</span></div>
+        <div class="b2b-rows">
+          <div class="b2b-row"><span class="ic"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><div><b>Кому:</b> карьерные центры вузов, онлайн-школы</div></div>
+          <div class="b2b-row"><span class="ic"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M8 17v-5"/><path d="M13 17V8"/><path d="M18 17v-3"/></svg></span><div><b>Что:</b> mock-интервью для студентов + групповая аналитика — где группа проседает</div></div>
+          <div class="b2b-row"><span class="ic"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/><path d="M13 8l4 4-4 4"/></svg></span><div><b>Как продаём:</b>
+            <div class="b2b-flow">
+              <span class="stepbox">Демо</span><span class="arr">→</span>
+              <span class="stepbox">Пилот 2 недели</span><span class="arr">→</span>
+              <span class="stepbox last">Годовой контракт</span>
+            </div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card cost-bar vc-bot anim d5">
+      <span class="mono-label">Себестоимость</span>
+      <span><b>≈1–2 ₽</b> на сессию (оценка, идёт замер)</span>
+    </div>
+    <aside class="notes" data-time="0:45" data-total="4:45">
+      <p>B2C — две гипотезы цены: пакет 5 интервью под любые вакансии за 490 ₽ и 30 дней безлимита на время поиска работы за 990 ₽. Обе проверяем в CustDev. Себестоимость LLM — около 1–2 ₽ на сессию; это оценка, сейчас идёт замер.</p>
+      <p>B2B — карьерные центры вузов и онлайн-школы: mock-интервью для студентов плюс групповая аналитика — видно, где группа проседает. Продаём так: демо → пилот на 2 недели → годовой контракт.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ 08 — Валидация ════════════ -->
+  <section class="slide s-val" data-label="08" aria-label="Валидация">
+    <div class="slide-tag anim d1"><span class="num">08</span> Валидация</div>
+    <h2 class="section-title anim d2">Что проверили и что проверяем</h2>
+
+    <div class="val-grid vc-top vc-bot">
+      <div class="card val-col done anim d3">
+        <span class="mono-label">Сделано</span>
+        <ul class="val-list">
+          <li>Работающий продукт: полный цикл от вакансии до плана</li>
+          <li>Развёрнут на сервере: открывается по ссылке, интервью проходится целиком</li>
+          <li>Записан демо-сценарий: вакансия → резюме → интервью → отчёт → план</li>
+        </ul>
+      </div>
+      <div class="val-next anim d4">
+        <span class="mono-label">Проверяем</span>
+        <div class="card hyp">
+          <span class="mono-label">Проблема</span>
+          <div class="text">Бесплатные инструменты (ChatGPT, тренажёр Т1) не решают подготовку к конкретной вакансии</div>
+          <div class="how">Как проверяем: CustDev-интервью — чем не устраивают</div>
+        </div>
+        <div class="card hyp">
+          <span class="mono-label">Ценность</span>
+          <div class="text">Sokrat реально учит: средняя оценка ответов растёт от 1-й к 3-й сессии</div>
+          <div class="how">Как проверяем: тестовые пользователи, сравнение сессий</div>
+        </div>
+        <div class="card hyp">
+          <span class="mono-label">Деньги</span>
+          <div class="text">Джуны готовы заплатить 490 ₽ за пакет</div>
+          <div class="how">Как проверяем: траты на подготовку (опрос + интервью), кнопка оплаты</div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes" data-time="0:40" data-total="5:25">
+      <p>Что уже есть: работающий продукт — полный цикл от вакансии до плана подготовки; он развёрнут на сервере и открывается по ссылке; демо-сценарий записан. Дальше — проверка гипотез на живых людях.</p>
+      <p>Проверяем три гипотезы. Проблема: бесплатные инструменты — ChatGPT, тренажёр Т1 — не решают подготовку к конкретной вакансии; в CustDev выясняем, чем именно не устраивают. Ценность: Sokrat реально учит — средняя оценка ответов растёт от 1-й к 3-й сессии; проверяем на тестовых пользователях, сравнивая сессии. Деньги: джуны готовы заплатить 490 ₽ за пакет; выясняем траты на подготовку (опрос + интервью) и ставим кнопку оплаты.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ 09 — Дорожная карта ════════════ -->
+  <section class="slide s-road" data-label="09" aria-label="Дорожная карта">
+    <div class="slide-tag anim d1"><span class="num">09</span> Дорожная карта</div>
+    <h2 class="section-title anim d2">Дорожная карта</h2>
+
+    <div class="timeline vc-top vc-bot">
+      <div class="tl-item anim d3">
+        <div class="dotm"></div>
+        <div class="card tl-card">
+          <div class="tl-when">Октябрь–ноябрь</div>
+          <ul>
+            <li>15 CustDev-интервью</li>
+            <li>Надёжное хранение данных, согласие на ПДн, аналитика</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tl-item anim d4">
+        <div class="dotm"></div>
+        <div class="card tl-card">
+          <div class="tl-when">Декабрь</div>
+          <ul>
+            <li>20 первых пользователей</li>
+            <li>≥60% доходят до отчёта, ≥30% возвращаются на 2‑ю сессию</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tl-item anim d5">
+        <div class="dotm"></div>
+        <div class="card tl-card">
+          <div class="tl-when">Q1 2027</div>
+          <ul>
+            <li>Пилот с карьерным центром Волгатеха</li>
+            <li>Запуск оплаты</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tl-item later anim d6">
+        <div class="dotm"></div>
+        <div class="card tl-card">
+          <div class="tl-when">Дальше</div>
+          <ul>
+            <li>B2B-кабинет для вузов и школ</li>
+            <li>Голосовой режим</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <aside class="notes" data-time="0:40" data-total="6:05">
+      <p>Октябрь–ноябрь: 15 CustDev-интервью; надёжное хранение данных, согласие на ПДн и аналитика. Декабрь: 20 первых пользователей; цель — не меньше 60% доходят до отчёта и не меньше 30% возвращаются на 2-ю сессию.</p>
+      <p>Q1 2027: пилот с карьерным центром Волгатеха и запуск оплаты. Дальше — B2B-кабинет для вузов и школ и голосовой режим.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ 10 — Команда и запрос ════════════ -->
+  <section class="slide s-team" data-label="10" aria-label="Команда и запрос">
+    <div class="slide-tag anim d1"><span class="num">10</span> Команда и запрос</div>
+    <h2 class="section-title anim d2">Команда и запрос</h2>
+
+    <div class="team-grid vc-top vc-bot">
+      <div class="anim d3">
+        <div class="people">
+          <div class="card person">
+            <div class="av"><img src="{{PHOTO_IVAN}}" alt="Иван"></div>
+            <div><div class="name">Иван</div><div class="role">Фронтенд, промпты, дизайн</div></div>
+          </div>
+          <div class="card person">
+            <div class="av"><img src="{{PHOTO_ILYA}}" alt="Илья"></div>
+            <div><div class="name">Илья</div><div class="role">Бэкенд</div></div>
+          </div>
+          <div class="card person">
+            <div class="av"><img src="{{PHOTO_NIKITA}}" alt="Никита"></div>
+            <div><div class="name">Никита</div><div class="role">Аналитика и тестирование</div></div>
+          </div>
+        </div>
+        <div class="edu">2 курс, ПС-21, Волгатех</div>
+      </div>
+
+      <div class="card ask anim d4">
+        <span class="mono-label">Запрос</span>
+        <ul>
+          <li>Ментор по B2B-продажам в EdTech</li>
+          <li>Знакомство с карьерным центром Волгатеха</li>
+          <li>Доступ к студентам для CustDev</li>
+          <li>Поддержка заявки на грант „Студенческий стартап“ (очередь 2027)</li>
+        </ul>
+      </div>
+    </div>
+    <aside class="notes" data-time="0:35" data-total="6:40">
+      <p>Нас трое, 2 курс, ПС-21, Волгатех: Иван — фронтенд, промпты, дизайн; Илья — бэкенд; Никита — аналитика и тестирование.</p>
+      <p>Просим: ментора по B2B-продажам в EdTech, знакомство с карьерным центром Волгатеха, доступ к студентам для CustDev и поддержку заявки на грант „Студенческий стартап“ — очередь 2027 года. Спасибо! Дальше — приложение для вопросов.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ Приложение — разделитель ════════════ -->
+  <section class="slide s-divider s-app" data-label="—" data-part="app" aria-label="Приложение">
+    <div class="slide-tag anim d1">Приложение</div>
+    <div class="big anim d2">Ответы на вопросы жюри</div>
+    <ol class="anim d3">
+      <li><b>1</b> Архитектура и стек</li>
+      <li><b>2</b> Персональные данные и 152-ФЗ</li>
+      <li><b>3</b> Риски и как закрываем</li>
+    </ol>
+    <aside class="notes" data-time="—" data-total="—">
+      <p>Запасные слайды. Открываем по вопросу жюри: точка в навигации справа от разделителя.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ Приложение 1/3 — Архитектура ════════════ -->
+  <section class="slide s-app" data-label="1/3" data-part="app" aria-label="Архитектура и стек">
+    <div class="slide-tag anim d1">Приложение · <span class="num">1/3</span></div>
+    <h2 class="section-title anim d2">Архитектура и стек</h2>
+
+    <div class="arch vc-top anim d3">
+      <div class="card arch-box">
+        <span class="mono-label">Клиент</span>
+        <h4>Браузер</h4>
+        <p>Статический фронтенд без сборки: HTML + JS, hash-роутинг</p>
+      </div>
+      <div class="card arch-box">
+        <span class="mono-label">API</span>
+        <h4><span class="lat">FastAPI</span></h4>
+        <ul>
+          <li><code>web/server.py</code></li>
+          <li>Вход по логину, хеш пароля PBKDF2, подписанная cookie</li>
+        </ul>
+      </div>
+      <div class="card arch-box">
+        <span class="mono-label">Движок интервью · <code>sokrat/engine.py</code></span>
+        <ul>
+          <li>Разбор вакансии, профиль компании</li>
+          <li>Резюме → gap-анализ</li>
+          <li>Вопросы под вакансию и резюме</li>
+          <li>Анализ каждого ответа + STAR</li>
+          <li>Отчёт, индекс готовности, план на 7 дней</li>
+        </ul>
+      </div>
+      <div class="card arch-box ext">
+        <span class="mono-label">Внешние сервисы</span>
+        <ul>
+          <li>LLM: DeepSeek, запасной провайдер — OpenRouter</li>
+          <li>hh.ru API: вакансии и работодатели (по токену приложения)</li>
+          <li>SaluteSpeech: голос, опционально</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card arch-store vc-bot anim d4">
+      <span class="mono-label">Хранение</span>
+      <span>JSON-файлы: пользователи и завершённые сессии · идущее интервью — в памяти процесса · деплой в Docker</span>
+    </div>
+    <aside class="notes" data-time="—" data-total="—">
+      <p>Если спросят про стек: браузерный фронтенд без сборки → FastAPI → собственный движок интервью (engine.py) → DeepSeek через OpenAI-совместимый клиент, hh.ru API, опционально SaluteSpeech. Хранилище пока на JSON-файлах — переход на нормальное хранилище стоит в дорожной карте на октябрь–ноябрь.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ Приложение 2/3 — Персональные данные ════════════ -->
+  <section class="slide s-app" data-label="2/3" data-part="app" aria-label="Персональные данные и 152-ФЗ">
+    <div class="slide-tag anim d1">Приложение · <span class="num">2/3</span></div>
+    <h2 class="section-title anim d2">Персональные данные и <span class="lat">152</span>-ФЗ</h2>
+
+    <div class="pd-grid vc-top">
+      <div class="card pd-col keep anim d3">
+        <span class="mono-label">Что храним</span>
+        <ul>
+          <li>Логин и хеш пароля (PBKDF2)</li>
+          <li>Завершённые сессии: ответы, оценки, отзыв</li>
+          <li>Профиль из резюме: навыки, опыт, проекты; gap-анализ</li>
+        </ul>
+      </div>
+      <div class="card pd-col cut anim d4">
+        <span class="mono-label">Что вырезаем / не храним</span>
+        <ul>
+          <li>Email, телефоны, ссылки на соцсети вырезаются из резюме до отправки в LLM</li>
+          <li>Файл резюме удаляется сразу после разбора</li>
+          <li>Аудио с микрофона не сохраняется</li>
+        </ul>
+      </div>
+      <div class="card pd-col plan anim d5">
+        <span class="mono-label">Что планируем</span>
+        <ul>
+          <li>Согласие на обработку ПДн в интерфейсе</li>
+          <li>Удаление аккаунта и своих сессий</li>
+          <li>Политика сроков хранения</li>
+          <li>Вырезание имени и работодателей до LLM</li>
+          <li>Хостинг в РФ (локализация ПДн)</li>
+          <li>Уведомление Роскомнадзора о трансграничной передаче (LLM-провайдер)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="plaque pd-note vc-bot anim d6">Сейчас имя, работодатели и текст ответов доходят до LLM-провайдера — закрываем этапом «согласие на обработку ПДн»</div>
+    <aside class="notes" data-time="—" data-total="—">
+      <p>Честно говорим, что храним и чего пока нет. Контакты из резюме вырезаем до LLM, файл резюме не храним. Согласия, удаления аккаунта и политики хранения пока нет — это первый этап дорожной карты.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ Приложение 3/3 — Риски ════════════ -->
+  <section class="slide s-app" data-label="3/3" data-part="app" aria-label="Риски">
+    <div class="slide-tag anim d1">Приложение · <span class="num">3/3</span></div>
+    <h2 class="section-title anim d2">Риски и как закрываем</h2>
+
+    <div class="risk-list vc-top vc-bot">
+      <div class="card risk anim d3">
+        <div class="q">Оценка ответа от LLM может быть неточной</div>
+        <div class="a">Калибровка: сравниваем оценки модели с ручной разметкой ответов; разбор по критериям</div>
+      </div>
+      <div class="card risk anim d4">
+        <div class="q">Расходы на LLM без квот: интервью доступны без входа</div>
+        <div class="a">Лимиты на сессии и вход для полного цикла — вместе с запуском оплаты</div>
+      </div>
+      <div class="card risk anim d5">
+        <div class="q">Хранение на JSON-файлах, идущее интервью — в памяти процесса</div>
+        <div class="a">Хранилище — первый этап дорожной карты (октябрь–ноябрь)</div>
+      </div>
+      <div class="card risk anim d6">
+        <div class="q">Нет автотестов</div>
+        <div class="a">Тесты на критичный путь: остановка интервью, оценка, сохранение, авторизация</div>
+      </div>
+      <div class="card risk anim d7">
+        <div class="q">Конкуренция с бесплатным ChatGPT</div>
+        <div class="a">Интервью под вакансию, gap-анализ, индекс готовности и прогресс между сессиями — то, чего нет в обычном чате</div>
+      </div>
+    </div>
+    <aside class="notes" data-time="—" data-total="—">
+      <p>Риски называем сами, раньше жюри: точность оценки, расходы на LLM у анонимов, временное хранилище, отсутствие тестов, конкуренция с бесплатным чатом. По каждому — что делаем.</p>
+    </aside>
+  </section>
+
+</div>
+
+<nav class="progress" id="progress" aria-label="Слайды"></nav>
+
+</main>
+
+<div class="notes-panel" id="notesPanel" aria-live="polite">
+  <div class="np-head"><span id="npSlide">Слайд 01</span><span id="npTime"></span></div>
+  <div id="npBody"></div>
+</div>
+
+<div class="hint">
+  <span><kbd>←</kbd> <kbd>→</kbd> навигация</span>
+  <span><kbd>N</kbd> заметки</span>
+  <span><kbd>Esc</kbd> в начало</span>
+</div>
+
+<script>
+  /* ─── Stage scaling: keep the 1920×1080 canvas 16:9 in any viewport ── */
+  const stage = document.getElementById('stage');
+  function fitStage() {
+    const k = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    stage.style.setProperty('--k', k);
+  }
+  window.addEventListener('resize', fitStage);
+  fitStage();
+
+  /* ─── Slide navigation ──────────────────────────────────────── */
+  const slides   = Array.from(document.querySelectorAll('.slide'));
+  const total    = slides.length;
+  const mainCount = slides.filter(s => s.dataset.part !== 'app').length;
+  const progress = document.getElementById('progress');
+  const counter  = document.getElementById('counter');
+  let current    = 0;
+
+  // Build navigation dots: main slides, separator, appendix slides
+  const dots = slides.map((s, i) => {
+    if (s.dataset.part === 'app' && slides[i - 1] && slides[i - 1].dataset.part !== 'app') {
+      const sep = document.createElement('span');
+      sep.className = 'sep';
+      progress.appendChild(sep);
+    }
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('aria-label', s.getAttribute('aria-label') || ('Слайд ' + (i + 1)));
+    if (s.dataset.part === 'app') b.classList.add('app');
+    b.addEventListener('click', (e) => { e.stopPropagation(); goTo(i); });
+    progress.appendChild(b);
+    return b;
+  });
+
+  function renderCounter(slide) {
+    const label = slide.dataset.label;
+    const isApp = slide.dataset.part === 'app';
+    counter.classList.toggle('app', isApp);
+    if (!isApp) {
+      counter.innerHTML = '<span class="cur">' + label + '</span> / ' + String(mainCount).padStart(2, '0');
+    } else if (label === '—') {
+      counter.innerHTML = '<span class="cur">Приложение</span>';
+    } else {
+      counter.innerHTML = 'Приложение · <span class="cur">' + label + '</span>';
+    }
+  }
+
+  /* ─── Speaker notes (N) ─────────────────────────────────────── */
+  const notesPanel = document.getElementById('notesPanel');
+  function renderNotes(slide) {
+    const notes = slide.querySelector('.notes');
+    const label = slide.dataset.label;
+    const name = slide.getAttribute('aria-label') || '';
+    let head = name + (label && label !== '—' ? ' · ' + label : '');
+    if (slide.dataset.part === 'app') head = label === '—' ? 'Приложение' : 'Приложение · ' + label + ' · ' + name;
+    document.getElementById('npSlide').textContent = head;
+    const time = notes && notes.dataset.time && notes.dataset.time !== '—'
+      ? '⏱ ' + notes.dataset.time + ' · к концу слайда ' + notes.dataset.total
+      : '';
+    document.getElementById('npTime').textContent = time;
+    document.getElementById('npBody').innerHTML = notes ? notes.innerHTML : '<p>Заметок нет</p>';
+  }
+  function toggleNotes() { document.body.classList.toggle('notes-on'); }
+
+  function goTo(n) {
+    n = Math.max(0, Math.min(total - 1, n));
+    if (n === current && slides[n].classList.contains('active')) return;
+    slides.forEach((s, i) => s.classList.toggle('active', i === n));
+    dots.forEach((d, i) => d.classList.toggle('active', i === n));
+    current = n;
+    renderCounter(slides[n]);
+    renderNotes(slides[n]);
+    history.replaceState(null, '', '#' + (n + 1));
+    pauseDemoIfHidden();
+  }
+  const next = () => goTo(current + 1);
+  const prev = () => goTo(current - 1);
+
+  document.addEventListener('keydown', (e) => {
+    const onVideo = document.activeElement && document.activeElement.tagName === 'VIDEO';
+    // На демо-слайде пробел — пауза/воспроизведение, а не следующий слайд
+    if (e.key === ' ' && !onVideo && slides[current].contains(demoVideo)) {
+      e.preventDefault();
+      if (demoVideo.paused) demoVideo.play(); else demoVideo.pause();
+      return;
+    }
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || (e.key === ' ' && !onVideo)) {
+      e.preventDefault(); next();
+    } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+      e.preventDefault(); prev();
+    } else if (e.key === 'Escape' || e.key === 'Home') {
+      goTo(0);
+    } else if (e.key === 'End') {
+      goTo(total - 1);
+    } else if (e.key === 'n' || e.key === 'N' || e.key === 'т' || e.key === 'Т') {
+      toggleNotes();
+    }
+  });
+
+  // Click left half = prev, right half = next; ignore interactive elements
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('button, a, video, .video-box, .notes-panel, input, textarea, select')) return;
+    if (e.clientX > window.innerWidth / 2) next(); else prev();
+  });
+
+  // Mouse wheel, throttled so one gesture = one slide
+  let wheelLock = false;
+  document.addEventListener('wheel', (e) => {
+    if (e.target.closest('.notes-panel') || wheelLock || Math.abs(e.deltaY) < 20) return;
+    wheelLock = true;
+    setTimeout(() => { wheelLock = false; }, 700);
+    if (e.deltaY > 0) next(); else prev();
+  }, { passive: true });
+
+  // Touch swipe
+  let touchX = null;
+  document.addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    touchX = null;
+    if (Math.abs(dx) > 50) { if (dx < 0) next(); else prev(); }
+  });
+
+  /* ─── Demo video: placeholder until the file exists / plays ──── */
+  const demoBox = document.getElementById('demoBox');
+  const demoVideo = document.getElementById('demoVideo');
+  demoVideo.addEventListener('error', () => demoBox.classList.add('missing'));
+  demoVideo.addEventListener('play', () => demoBox.classList.add('playing'));
+  if (demoVideo.error) demoBox.classList.add('missing');
+
+  /* ─── Demo video: chapters and speed (default ×4) ────────────── */
+  const demoCtrl = document.getElementById('demoCtrl');
+  const chapterBtns = [...demoCtrl.querySelectorAll('.chapter')];
+  const speedBtns = [...demoCtrl.querySelectorAll('.speed')];
+  let demoRate = 4;
+  function applyDemoRate() {
+    demoVideo.defaultPlaybackRate = demoRate;
+    demoVideo.playbackRate = demoRate;
+    speedBtns.forEach((b) => b.classList.toggle('active', Number(b.dataset.rate) === demoRate));
+  }
+  function markChapter() {
+    let idx = -1;
+    chapterBtns.forEach((b, i) => { if (demoVideo.currentTime + 0.25 >= Number(b.dataset.t)) idx = i; });
+    chapterBtns.forEach((b, i) => b.classList.toggle('active', i === idx));
+  }
+  ['loadedmetadata', 'play', 'seeked'].forEach((ev) => demoVideo.addEventListener(ev, applyDemoRate));
+  demoVideo.addEventListener('timeupdate', markChapter);
+  chapterBtns.forEach((b) => b.addEventListener('click', () => {
+    demoVideo.currentTime = Number(b.dataset.t);
+    applyDemoRate();
+    demoVideo.play();
+    markChapter();
+    b.blur();
+  }));
+  speedBtns.forEach((b) => b.addEventListener('click', () => {
+    demoRate = Number(b.dataset.rate);
+    applyDemoRate();
+    b.blur();
+  }));
+  applyDemoRate();
+
+  function pauseDemoIfHidden() {
+    if (!demoVideo.closest('.slide').classList.contains('active') && !demoVideo.paused) demoVideo.pause();
+  }
+
+  /* ─── Start slide from URL hash (#1 … #15) ───────────────────── */
+  const start = parseInt(location.hash.slice(1), 10);
+  current = -1;
+  goTo(Number.isFinite(start) ? start - 1 : 0);
+</script>
+</body>
+</html>
