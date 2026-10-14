@@ -12,6 +12,13 @@ tpl = open(tpl_path, encoding='utf-8').read()
 
 video = re.search(r'<source src="(data:video/mp4;base64,[^"]+)"', v9).group(1)
 photos = dict(re.findall(r'<img src="(data:image/jpeg;base64,[^"]+)" alt="([^"]+)"', v9)[i][::-1] for i in range(4))
+# Фото из pitch/src/photo_<name>.jpg (если есть) заменяют фото из v9.
+import base64, os
+_src_dir = os.path.dirname(os.path.abspath(__file__))
+for _key, _name in (('Иван', 'ivan'), ('Илья', 'ilya'), ('Никита', 'nikita')):
+    _path = os.path.join(_src_dir, f'photo_{_name}.jpg')
+    if os.path.exists(_path):
+        photos[_key] = 'data:image/jpeg;base64,' + base64.b64encode(open(_path, 'rb').read()).decode('ascii')
 subs = {
     '{{LOGO_VIDEO}}': video,
     '{{PHOTO_IVAN}}': photos['Иван'],
