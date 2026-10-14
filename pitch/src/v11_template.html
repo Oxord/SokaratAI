@@ -866,12 +866,17 @@
     font-weight: 700;
   }
 
-  /* ═══════════ 11 — Q&A (финальный слайд) ═══════════ */
-  .qa-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
-  .qa { padding: 30px 30px 28px; display: flex; flex-direction: column; gap: 10px; }
-  .qa .mono-label { color: var(--teal); }
-  .qa h4 { font-family: var(--font-display); font-size: 32px; font-weight: 700; line-height: 1.15; }
-  .qa p { font-size: 24px; line-height: 1.4; color: var(--ink-2); }
+  /* ═══════════ Рынок ═══════════ */
+  .mk-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px; }
+  .mk { padding: 28px 26px; display: flex; flex-direction: column; gap: 8px; }
+  .mk .mono-label { color: var(--teal); }
+  .mk .v { font-family: var(--font-display); font-size: 50px; font-weight: 800; line-height: 1.05; letter-spacing: -0.02em; color: var(--ink); margin-top: 6px; white-space: nowrap; }
+  .mk .d { font-size: 26px; font-weight: 600; color: var(--ink); line-height: 1.25; }
+  .mk .f { font-size: 21px; color: var(--ink-mute); line-height: 1.35; min-height: 58px; }
+  .mk .rub { margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--line); font-family: var(--font-display); font-size: 32px; font-weight: 700; color: var(--accent); }
+  .mk.goal { background: linear-gradient(160deg, var(--accent-soft), var(--card) 70%); border-color: var(--accent-mid); }
+  .mk.goal .v { color: var(--accent); font-size: 42px; }
+  .s-mk .plaque { margin-top: 30px; }
 
   /* ═══════════ Chrome (brand, counter, progress) — inside the stage ═══════════ */
   .brand-mark, .counter {
@@ -1061,9 +1066,49 @@
     </aside>
   </section>
 
-  <!-- ════════════ 02 — Проблема ════════════ -->
-  <section class="slide s-problem" data-label="02" aria-label="Проблема">
-    <div class="slide-tag anim d1"><span class="num">02</span> Проблема</div>
+  <!-- ════════════ 02 — Команда и запрос ════════════ -->
+  <section class="slide s-team" data-label="02" aria-label="Команда и запрос">
+    <div class="slide-tag anim d1"><span class="num">02</span> Команда и запрос</div>
+    <h2 class="section-title anim d2">Команда и запрос</h2>
+
+    <div class="team-grid vc-top vc-bot">
+      <div class="anim d3">
+        <div class="people">
+          <div class="card person">
+            <div class="av"><img src="{{PHOTO_IVAN}}" alt="Иван"></div>
+            <div><div class="name">Иван</div><div class="role">Фронтенд и дизайн</div></div>
+          </div>
+          <div class="card person">
+            <div class="av"><img src="{{PHOTO_ILYA}}" alt="Илья"></div>
+            <div><div class="name">Илья</div><div class="role">Бэкенд</div></div>
+          </div>
+          <div class="card person">
+            <div class="av"><img src="{{PHOTO_NIKITA}}" alt="Никита"></div>
+            <div><div class="name">Никита</div><div class="role">Аналитика и тестирование</div></div>
+          </div>
+        </div>
+        <div class="edu">2 курс, ПС-21, Волгатех</div>
+      </div>
+
+      <div class="card ask anim d4">
+        <span class="mono-label">Запрос</span>
+        <ul>
+          <li>Ментор по B2B-продажам в EdTech</li>
+          <li>Знакомство с карьерным центром Волгатеха</li>
+          <li>Доступ к студентам для CustDev</li>
+          <li>Поддержка заявки на грант „Студенческий стартап“ (очередь 2027)</li>
+        </ul>
+      </div>
+    </div>
+    <aside class="notes" data-time="0:35" data-total="0:55">
+      <p>Нас трое, 2 курс, ПС-21, Волгатех: Иван — фронтенд и дизайн; Илья — бэкенд; Никита — аналитика и тестирование.</p>
+      <p>Просим: ментора по B2B-продажам в EdTech, знакомство с карьерным центром Волгатеха, доступ к студентам для CustDev и поддержку заявки на грант „Студенческий стартап“ — очередь 2027 года. Теперь — к самому продукту.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ 03 — Проблема ════════════ -->
+  <section class="slide s-problem" data-label="03" aria-label="Проблема">
+    <div class="slide-tag anim d1"><span class="num">03</span> Проблема</div>
     <h2 class="section-title anim d2">Собеседование для джуна — редкий шанс. И провалить его дорого</h2>
 
     <div class="stat-row vc-top">
@@ -1094,16 +1139,16 @@
       </div>
     </div>
     <div class="plaque anim d8">CustDev-опрос, 22 ответа студентов и джунов: 10 не готовятся никак, 9 — через ChatGPT или YandexGPT, 10 — по спискам вопросов</div>
-    <aside class="notes" data-time="0:45" data-total="1:05">
+    <aside class="notes" data-time="0:45" data-total="1:40">
       <p>Конкуренция за junior-вакансию за 2021→2025 выросла с 8 до 19 резюме на место — это исследование «Зерокодера» на данных hh.ru (Инк., 2026). По hh.индексу в июле 2026 в IT приходится 24,4 резюме на вакансию. Собеседование стало редким шансом, и провалить его дорого.</p>
       <p>При этом готовятся вслепую: по общим спискам вопросов, через дорогой живой mock-собес, который не повторишь пять раз, или через ChatGPT: он ответит на вопросы, но сценарий, оценку и прогресс придётся выстраивать самому.</p>
       <p>Это подтверждает наш опрос: из 22 опрошенных студентов и джунов 10 не готовятся никак, 9 готовятся через ChatGPT или YandexGPT, 10 — по спискам вопросов (можно было выбрать несколько вариантов).</p>
     </aside>
   </section>
 
-  <!-- ════════════ 03 — ЦА ════════════ -->
-  <section class="slide s-aud" data-label="03" aria-label="Целевая аудитория">
-    <div class="slide-tag anim d1"><span class="num">03</span> Целевая аудитория</div>
+  <!-- ════════════ 04 — ЦА ════════════ -->
+  <section class="slide s-aud" data-label="04" aria-label="Целевая аудитория">
+    <div class="slide-tag anim d1"><span class="num">04</span> Целевая аудитория</div>
     <h2 class="section-title anim d2">Для кого Sokrat</h2>
 
     <div class="aud-grid vc-top">
@@ -1131,15 +1176,15 @@
     </div>
 
     <div class="plaque vc-bot anim d7">Опрос, 22 ответа: 13 — Backend, 9 ищут работу сейчас. Доли сегментов и готовность платить — гипотеза, проверяем в интервью</div>
-    <aside class="notes" data-time="0:30" data-total="1:35">
+    <aside class="notes" data-time="0:30" data-total="2:10">
       <p>Фокус MVP — два сегмента: джуны в IT, для которых первое собеседование — чёрный ящик, и люди в карьерном переходе: знания есть, а продать себя пока не умеют. Дальше — студенты старших курсов и опытные специалисты после перерыва.</p>
       <p>По оценке «Зерокодера», в 2026–2029 на рынок выйдут 300 000+ студентов IT. В нашем опросе 22 человек: 13 — Backend, 9 ищут работу прямо сейчас. Доли сегментов и готовность платить мы пока не утверждаем — это гипотеза, проверяем в интервью.</p>
     </aside>
   </section>
 
-  <!-- ════════════ 04 — Как работает ════════════ -->
-  <section class="slide s-how" data-label="04" aria-label="Как работает">
-    <div class="slide-tag anim d1"><span class="num">04</span> Как работает</div>
+  <!-- ════════════ 05 — Как работает ════════════ -->
+  <section class="slide s-how" data-label="05" aria-label="Как работает">
+    <div class="slide-tag anim d1"><span class="num">05</span> Как работает</div>
     <h2 class="section-title anim d2" style="max-width: none; margin-bottom: 30px;">Вакансия → твоё персональное интервью → план</h2>
 
     <div class="ribbon anim d3">
@@ -1169,15 +1214,15 @@
     </div>
 
     <div class="stack-line anim d5"><b>DeepSeek</b> · <b>FastAPI</b> · ≈1–2 ₽ LLM на сессию (оценка)</div>
-    <aside class="notes" data-time="0:45" data-total="2:20">
+    <aside class="notes" data-time="0:45" data-total="2:55">
       <p>Путь пользователя: вставляет ссылку на вакансию или её текст → Sokrat собирает профиль компании → по резюме делает gap-анализ против требований вакансии → проводит интервью под эту вакансию: с персоной интервьюера, стресс-режимом, на русском или английском → разбирает каждый ответ по точности, структуре, полноте и STAR → выдаёт индекс готовности и план на 7 дней.</p>
       <p>На экране два ключевых экрана: gap-анализ и отчёт. Под капотом DeepSeek и FastAPI; LLM обходится примерно в 1–2 рубля на сессию — это оценка.</p>
     </aside>
   </section>
 
-  <!-- ════════════ 05 — Демо ════════════ -->
-  <section class="slide s-demo" data-label="05" aria-label="Демо">
-    <div class="slide-tag anim d1"><span class="num">05</span> Демо</div>
+  <!-- ════════════ 06 — Демо ════════════ -->
+  <section class="slide s-demo" data-label="06" aria-label="Демо">
+    <div class="slide-tag anim d1"><span class="num">06</span> Демо</div>
     <div class="browser anim d2">
       <div class="browser-bar"><span></span><span></span><span></span></div>
       <div class="video-box" id="demoBox">
@@ -1201,7 +1246,7 @@
       <button type="button" class="speed" data-rate="1">×1</button>
     </div>
     <div class="demo-cap anim d3">Демо: от вакансии до плана подготовки (ускорено ×4)</div>
-    <aside class="notes" data-time="1:00" data-total="3:20">
+    <aside class="notes" data-time="1:00" data-total="3:55">
       <p>Запускаю видео (клик по плееру). Комментирую по ходу: вставили вакансию → Sokrat собрал профиль компании → загрузили резюме, видим gap → пара вопросов интервью и разбор ответа → отчёт с индексом готовности и планом на 7 дней.</p>
       <p>Клик по главе — прыжок к экрану; ×1 — если жюри попросит подробнее. Ответы в демо — тестового кандидата, сгенерированы для показа.</p>
       <p>Если видео не запускается — возвращаюсь на слайд 4 (←) и рассказываю по скриншотам.</p>
@@ -1210,9 +1255,9 @@
     </aside>
   </section>
 
-  <!-- ════════════ 06 — Конкуренты ════════════ -->
-  <section class="slide s-comp" data-label="06" aria-label="Конкуренты">
-    <div class="slide-tag anim d1"><span class="num">06</span> Конкуренты</div>
+  <!-- ════════════ 07 — Конкуренты ════════════ -->
+  <section class="slide s-comp" data-label="07" aria-label="Конкуренты">
+    <div class="slide-tag anim d1"><span class="num">07</span> Конкуренты</div>
     <h2 class="section-title anim d2" style="margin-bottom: 28px;">Вопросы задают многие. К конкретной вакансии готовит <em>Sokrat</em></h2>
 
     <div class="card comp-wrap anim d3">
@@ -1246,15 +1291,15 @@
     <div class="comp-foot anim d5">
       <div class="pos-banner">Суфлёры помогают обмануть на собеседовании. <b>Sokrat помогает к нему подготовиться.</b></div>
     </div>
-    <aside class="notes" data-time="0:40" data-total="4:00">
+    <aside class="notes" data-time="0:40" data-total="4:35">
       <p>Вопросы для собеседования сегодня задают многие: ChatGPT и YandexGPT, Тренажёр Т1, Final Round AI. Но к конкретной вакансии — с профилем компании, gap-анализом резюме, индексом готовности и прогрессом между сессиями — готовит Sokrat. ChatGPT может почти всё — но вручную: без сценария, оценки и прогресса.</p>
       <p>Отдельно — суфлёры вроде ENIGMA и Qompanion: они помогают обмануть на собеседовании, Sokrat помогает к нему подготовиться. Сравнение — по открытым описаниям сервисов на октябрь 2026.</p>
     </aside>
   </section>
 
-  <!-- ════════════ 07 — Бизнес-модель ════════════ -->
-  <section class="slide s-bm" data-label="07" aria-label="Бизнес-модель">
-    <div class="slide-tag anim d1"><span class="num">07</span> Бизнес-модель</div>
+  <!-- ════════════ 08 — Бизнес-модель ════════════ -->
+  <section class="slide s-bm" data-label="08" aria-label="Бизнес-модель">
+    <div class="slide-tag anim d1"><span class="num">08</span> Бизнес-модель</div>
     <h2 class="section-title anim d2">Бизнес-модель</h2>
 
     <div class="bm-grid vc-top">
@@ -1293,15 +1338,57 @@
       <span class="mono-label">Себестоимость</span>
       <span><b>≈1–2 ₽</b> на сессию (оценка, идёт замер)</span>
     </div>
-    <aside class="notes" data-time="0:45" data-total="4:45">
+    <aside class="notes" data-time="0:45" data-total="5:20">
       <p>B2C — две гипотезы цены: пакет 5 интервью под любые вакансии за 490 ₽ и 30 дней безлимита на время поиска работы за 990 ₽. Обе проверяем в CustDev. Себестоимость LLM — около 1–2 ₽ на сессию; это оценка, сейчас идёт замер.</p>
       <p>B2B — карьерные центры вузов и онлайн-школы: mock-интервью для студентов плюс групповая аналитика — видно, где группа проседает. Продаём так: демо → пилот на 2 недели → годовой контракт.</p>
     </aside>
   </section>
 
-  <!-- ════════════ 08 — Валидация ════════════ -->
-  <section class="slide s-val" data-label="08" aria-label="Валидация">
-    <div class="slide-tag anim d1"><span class="num">08</span> Валидация</div>
+  <!-- ════════════ 09 — Рынок ════════════ -->
+  <section class="slide s-mk" data-label="09" aria-label="Рынок">
+    <div class="slide-tag anim d1"><span class="num">09</span> Рынок</div>
+    <h2 class="section-title anim d2">Рынок: считаем снизу вверх</h2>
+
+    <div class="mk-grid vc-top">
+      <div class="card mk anim d3">
+        <span class="mono-label">Весь поток</span>
+        <div class="v">75 000</div>
+        <div class="d">выходят на рынок за год</div>
+        <div class="f">300 000+ студентов IT за 2026–2029 ÷ 4 года</div>
+        <div class="rub">≈ 36,8 млн ₽</div>
+      </div>
+      <div class="card mk anim d4">
+        <span class="mono-label">Ищут работу сейчас</span>
+        <div class="v">30 700</div>
+        <div class="d">активно ищут</div>
+        <div class="f">× 41% — 9 из 22 в нашем опросе</div>
+        <div class="rub">≈ 15,0 млн ₽</div>
+      </div>
+      <div class="card mk anim d5">
+        <span class="mono-label">Платящее ядро</span>
+        <div class="v">4 200</div>
+        <div class="d">уже платили за подготовку</div>
+        <div class="f">× 14% — 3 из 22 в нашем опросе</div>
+        <div class="rub">≈ 2,1 млн ₽</div>
+      </div>
+      <div class="card mk goal anim d6">
+        <span class="mono-label">Цель на первый год</span>
+        <div class="v">300–1 500</div>
+        <div class="d">пользователей</div>
+        <div class="f">1–5% от «ищут сейчас»</div>
+        <div class="rub">0,15–0,75 млн ₽</div>
+      </div>
+    </div>
+    <div class="plaque vc-bot anim d7">Цена 490 ₽ за пакет — гипотеза; доли — из опроса 22 человек, это порядок величины, а не прогноз. B2B (вузы, школы) в расчёт не включён — оценим после пилота.</div>
+    <aside class="notes" data-time="0:30" data-total="5:50">
+      <p>Считаем снизу вверх, и это порядок величины, а не прогноз. По оценке «Зерокодера», в 2026–2029 на рынок выйдут 300 000+ студентов IT — это около 75 000 в год. По нашему опросу, 9 из 22, то есть около 41%, ищут работу сейчас — это примерно 30 700 человек в год. Платили за подготовку 3 из 22, около 14% — это примерно 4 200 человек, то есть платящее ядро.</p>
+      <p>При цене 490 ₽ за пакет весь поток — около 37 млн ₽ в год, ищущие — около 15 млн, платящее ядро — около 2 млн. Цель первого года — 1–5% от ищущих, то есть 300–1 500 пользователей и 0,15–0,75 млн ₽. Это скромно, и мы не скрываем: B2C-рынок небольшой, поэтому ставим на B2B — вузы и онлайн-школы; его в расчёт не включали и оценим по итогам пилота.</p>
+    </aside>
+  </section>
+
+  <!-- ════════════ 10 — Валидация ════════════ -->
+  <section class="slide s-val" data-label="10" aria-label="Валидация">
+    <div class="slide-tag anim d1"><span class="num">10</span> Валидация</div>
     <h2 class="section-title anim d2">Что проверили и что проверяем</h2>
 
     <div class="val-grid vc-top vc-bot">
@@ -1332,16 +1419,16 @@
         </div>
       </div>
     </div>
-    <aside class="notes" data-time="0:40" data-total="5:25">
+    <aside class="notes" data-time="0:40" data-total="6:30">
       <p>Что уже есть: работающий продукт — полный цикл от вакансии до плана подготовки, развёрнут на сервере, демо-сценарий записан. Провели CustDev-опрос: 22 ответа, из них 9 человек оставили контакт для интервью или теста.</p>
       <p>Что показал опрос: 9 из 22 готовятся через ChatGPT или YandexGPT, 10 — никак; из 13 описавших главную трудность 7 назвали страх или «непонятно, что тренировать». За подготовку платили 3 из 22, двое — больше 5 000 ₽. Это не проверка цены 490 ₽, а подтверждение, что платящие есть.</p>
       <p>Проверяем три гипотезы. Проблема: бесплатные инструменты — ChatGPT, тренажёр Т1 — не решают подготовку к конкретной вакансии; в CustDev выясняем, чем именно не устраивают. Ценность: Sokrat реально учит — средняя оценка ответов растёт от 1-й к 3-й сессии; проверяем на тестовых пользователях, сравнивая сессии. Деньги: джуны готовы заплатить 490 ₽ за пакет; выясняем траты на подготовку (опрос + интервью) и ставим кнопку оплаты.</p>
     </aside>
   </section>
 
-  <!-- ════════════ 09 — Дорожная карта ════════════ -->
-  <section class="slide s-road" data-label="09" aria-label="Дорожная карта">
-    <div class="slide-tag anim d1"><span class="num">09</span> Дорожная карта</div>
+  <!-- ════════════ 11 — Дорожная карта ════════════ -->
+  <section class="slide s-road" data-label="11" aria-label="Дорожная карта">
+    <div class="slide-tag anim d1"><span class="num">11</span> Дорожная карта</div>
     <h2 class="section-title anim d2">Дорожная карта</h2>
 
     <div class="timeline vc-top vc-bot">
@@ -1386,75 +1473,22 @@
         </div>
       </div>
     </div>
-    <aside class="notes" data-time="0:40" data-total="6:05">
+    <aside class="notes" data-time="0:40" data-total="7:10">
       <p>Октябрь–ноябрь: 15 CustDev-интервью — девять контактов из опроса уже есть; надёжное хранение данных, согласие на ПДн и аналитика. Декабрь: 20 первых пользователей; цель — не меньше 60% доходят до отчёта и не меньше 30% возвращаются на 2-ю сессию.</p>
       <p>Q1 2027: пилот с карьерным центром Волгатеха и запуск оплаты. Дальше — B2B-кабинет для вузов и школ и голосовой режим.</p>
     </aside>
   </section>
 
-  <!-- ════════════ 10 — Команда и запрос ════════════ -->
-  <section class="slide s-team" data-label="10" aria-label="Команда и запрос">
-    <div class="slide-tag anim d1"><span class="num">10</span> Команда и запрос</div>
-    <h2 class="section-title anim d2">Команда и запрос</h2>
-
-    <div class="team-grid vc-top vc-bot">
-      <div class="anim d3">
-        <div class="people">
-          <div class="card person">
-            <div class="av"><img src="{{PHOTO_IVAN}}" alt="Иван"></div>
-            <div><div class="name">Иван</div><div class="role">Фронтенд, промпты, дизайн</div></div>
-          </div>
-          <div class="card person">
-            <div class="av"><img src="{{PHOTO_ILYA}}" alt="Илья"></div>
-            <div><div class="name">Илья</div><div class="role">Бэкенд</div></div>
-          </div>
-          <div class="card person">
-            <div class="av"><img src="{{PHOTO_NIKITA}}" alt="Никита"></div>
-            <div><div class="name">Никита</div><div class="role">Аналитика и тестирование</div></div>
-          </div>
-        </div>
-        <div class="edu">2 курс, ПС-21, Волгатех</div>
-      </div>
-
-      <div class="card ask anim d4">
-        <span class="mono-label">Запрос</span>
-        <ul>
-          <li>Ментор по B2B-продажам в EdTech</li>
-          <li>Знакомство с карьерным центром Волгатеха</li>
-          <li>Доступ к студентам для CustDev</li>
-          <li>Поддержка заявки на грант „Студенческий стартап“ (очередь 2027)</li>
-        </ul>
-      </div>
-    </div>
-    <aside class="notes" data-time="0:35" data-total="6:40">
-      <p>Нас трое, 2 курс, ПС-21, Волгатех: Иван — фронтенд, промпты, дизайн; Илья — бэкенд; Никита — аналитика и тестирование.</p>
-      <p>Просим: ментора по B2B-продажам в EdTech, знакомство с карьерным центром Волгатеха, доступ к студентам для CustDev и поддержку заявки на грант „Студенческий стартап“ — очередь 2027 года. Спасибо! Дальше — ответы на вопросы жюри.</p>
-    </aside>
-  </section>
-
-  <!-- ════════════ 11 — Ответы на вопросы жюри (финальный слайд) ════════════ -->
-  <section class="slide s-qa" data-label="11" aria-label="Ответы на вопросы жюри">
-    <div class="slide-tag anim d1"><span class="num">11</span> Вопросы</div>
-    <h2 class="section-title anim d2">Ответы на вопросы жюри</h2>
-
-    <div class="qa-grid vc-top vc-bot">
-      <div class="card qa anim d3">
-        <span class="mono-label">Стек</span>
-        <h4>На чём это сделано</h4>
-        <p>Браузерный фронтенд без сборки, бэкенд на FastAPI, движок интервью на Python. LLM — DeepSeek, запасной провайдер — OpenRouter. Вакансии — hh.ru API, голос — SaluteSpeech. Развёрнуто в Docker.</p>
-      </div>
-      <div class="card qa anim d4">
-        <span class="mono-label">152-ФЗ</span>
-        <h4>Что с персональными данными</h4>
-        <p>Email, телефоны и соцсети вырезаем из резюме до отправки в LLM; файл удаляется после разбора; аудио не сохраняем. Сейчас имя, работодатели и ответы доходят до LLM-провайдера — закрываем согласием, удалением аккаунта и хостингом в РФ.</p>
-      </div>
-      <div class="card qa anim d5">
-        <span class="mono-label">Риски</span>
-        <h4>Что может пойти не так</h4>
-        <p>Точность оценки LLM — калибруем на ручной разметке. Расходы без квот — лимиты вместе с оплатой. Хранение в JSON — переход на базу в октябре–ноябре. Автотестов пока нет — пишем на критичный путь.</p>
-      </div>
-    </div>
+  <!-- ════════════ 12 — Финал (копия обложки) ════════════ -->
+  <section class="slide s-cover" data-label="12" aria-label="Завершение">
+    <video class="logo-video anim d1" autoplay loop muted playsinline aria-hidden="true">
+      <source src="{{LOGO_VIDEO}}" type="video/mp4">
+    </video>
+    <div class="cover-brand anim d1"><span class="dot"></span>Sokrat · Волгатех</div>
+    <h1 class="title anim d2">Репетиция <em>именно того</em> собеседования, на которое ты идёшь</h1>
+    <p class="cover-sub anim d3"><b>Sokrat</b> — AI-тренажёр собеседований под конкретную вакансию, компанию и твоё резюме</p>
     <aside class="notes" data-time="—" data-total="—">
+      <p><b>Спасибо!</b> Ниже — заготовленные ответы на вопросы жюри.</p>
       <p><b>Стек.</b> Браузерный фронтенд без сборки (HTML + JS), API на FastAPI, вход по логину с хешем пароля PBKDF2 и подписанной cookie. Движок интервью: разбор вакансии и профиль компании, резюме и gap-анализ, вопросы под вакансию, анализ каждого ответа и STAR, отчёт, индекс готовности и план на 7 дней. Внешние сервисы: DeepSeek (запасной — OpenRouter), hh.ru API по токену приложения, SaluteSpeech для голоса. Хранение: JSON-файлы с пользователями и завершёнными сессиями, идущее интервью — в памяти процесса. Деплой — Docker.</p>
       <p><b>Персональные данные.</b> Храним логин и хеш пароля, завершённые сессии (ответы, оценки, отзыв), профиль из резюме. Вырезаем email, телефоны и соцсети до отправки в LLM; файл резюме удаляется сразу после разбора; аудио не сохраняется. В планах: согласие на обработку ПДн в интерфейсе, удаление аккаунта и сессий, политика сроков хранения, вырезание имени и работодателей до LLM, хостинг в РФ, уведомление Роскомнадзора о трансграничной передаче. Честно: сейчас имя, работодатели и текст ответов доходят до LLM-провайдера — закрываем этапом «согласие и хранилище».</p>
       <p><b>Риски.</b> Оценка LLM может быть неточной — сверяем с ручной разметкой, разбор по критериям. Расходы на LLM без квот — интервью доступны без входа; лимиты вводим вместе с оплатой. Хранение на JSON-файлах — первый этап дорожной карты. Нет автотестов — пишем на критичный путь: остановка интервью, оценка, сохранение, авторизация. Конкуренция с бесплатным ChatGPT — наше отличие: интервью под вакансию, gap-анализ, индекс готовности и прогресс между сессиями.</p>
