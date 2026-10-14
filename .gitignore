@@ -20,4 +20,3 @@ pitch/assets/*.webm
 .claude/settings.local.json
 
 !pitch/assets/demo.webm
-!pitch/assets/demo_raw.webm
