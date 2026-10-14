@@ -20,3 +20,6 @@ pitch/assets/*.webm
 .claude/settings.local.json
 
 !pitch/assets/demo.webm
+
+# Сырые ответы CustDev содержат персональные контакты
+Sokrat CustDev*.xlsx

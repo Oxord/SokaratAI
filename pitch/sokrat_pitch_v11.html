@@ -866,81 +866,12 @@
     font-weight: 700;
   }
 
-  /* ═══════════ Appendix divider ═══════════ */
-  .s-divider { justify-content: center; }
-  .s-divider .big {
-    font-family: var(--font-display);
-    font-size: 104px;
-    font-weight: 700;
-    letter-spacing: -0.035em;
-    line-height: 1;
-    margin-bottom: 50px;
-  }
-  .s-divider ol { list-style: none; display: grid; grid-template-columns: 1fr; gap: 16px; max-width: 1300px; }
-  .s-divider li { font-size: 30px; display: flex; gap: 18px; align-items: baseline; }
-  .s-divider li b { font-family: var(--font-mono); color: var(--teal); font-weight: 600; }
-  .s-app .slide-tag .num { color: var(--teal); }
-  .s-app .slide-tag::before { background: var(--teal); }
-
-  /* ═══════════ Appendix 1/3 — Architecture ═══════════ */
-  .arch {
-    display: grid;
-    grid-template-columns: 0.8fr 0.9fr 1.35fr 1.1fr;
-    gap: 22px;
-    align-items: stretch;
-  }
-  .arch-box { padding: 26px 26px 24px; position: relative; }
-  .arch-box .mono-label { display: block; margin-bottom: 12px; color: var(--accent); }
-  .arch-box.ext .mono-label { color: var(--teal); }
-  .arch-box h4 { font-family: var(--font-display); font-size: 28px; font-weight: 700; margin-bottom: 10px; line-height: 1.15; }
-  .arch-box p, .arch-box li { font-size: 23px; color: var(--ink-2); line-height: 1.35; }
-  .arch-box ul { list-style: none; }
-  .arch-box li { padding: 7px 0; border-bottom: 1px solid var(--line); }
-  .arch-box li:last-child { border-bottom: none; }
-  .arch-box code { font-family: var(--font-mono); font-size: 20px; color: var(--accent); }
-  .arch-box:not(:last-child)::after {
-    content: "→";
-    position: absolute;
-    right: -20px; top: 50%;
-    transform: translateY(-50%);
-    color: var(--accent);
-    font-size: 26px; font-weight: 700;
-    z-index: 2;
-  }
-  .arch-store {
-    margin-top: 24px;
-    padding: 20px 28px;
-    font-size: 22px;
-    color: var(--ink-2);
-    display: flex; gap: 22px; align-items: center;
-  }
-  .arch-store .mono-label { flex-shrink: 0; }
-
-  /* ═══════════ Appendix 2/3 — Personal data ═══════════ */
-  .pd-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; }
-  .pd-col { padding: 30px 32px; }
-  .pd-col .mono-label { display: block; margin-bottom: 14px; }
-  .pd-col.keep .mono-label { color: var(--accent); }
-  .pd-col.cut  .mono-label { color: var(--green); }
-  .pd-col.plan .mono-label { color: var(--amber); }
-  .pd-col.plan { border-style: dashed; border-color: rgba(194, 98, 12, 0.35); }
-  .pd-col ul { list-style: none; }
-  .pd-col li { font-size: 23px; line-height: 1.35; padding: 12px 0; border-bottom: 1px solid var(--line); }
-  .pd-col li:last-child { border-bottom: none; }
-  .pd-note { margin-top: 26px; }
-
-  /* ═══════════ Appendix 3/3 — Risks ═══════════ */
-  .risk-list { display: flex; flex-direction: column; gap: 16px; }
-  .risk {
-    display: grid;
-    grid-template-columns: 0.9fr 1.1fr;
-    gap: 32px;
-    padding: 20px 28px;
-    align-items: center;
-  }
-  .risk .q { font-size: 24px; font-weight: 600; color: var(--ink); display: flex; gap: 14px; }
-  .risk .q::before { content: "⚠"; color: var(--amber); }
-  .risk .a { font-size: 22px; color: var(--ink-2); line-height: 1.35; padding-left: 28px; border-left: 2px solid var(--accent-mid); }
+  /* ═══════════ 11 — Q&A (финальный слайд) ═══════════ */
+  .qa-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .qa { padding: 30px 30px 28px; display: flex; flex-direction: column; gap: 10px; }
+  .qa .mono-label { color: var(--teal); }
+  .qa h4 { font-family: var(--font-display); font-size: 32px; font-weight: 700; line-height: 1.15; }
+  .qa p { font-size: 24px; line-height: 1.4; color: var(--ink-2); }
 
   /* ═══════════ Chrome (brand, counter, progress) — inside the stage ═══════════ */
   .brand-mark, .counter {
@@ -1162,9 +1093,11 @@
         <p>но сценарий, оценку и прогресс придётся выстраивать самому</p>
       </div>
     </div>
+    <div class="plaque anim d8">CustDev-опрос, 22 ответа студентов и джунов: 10 не готовятся никак, 9 — через ChatGPT или YandexGPT, 10 — по спискам вопросов</div>
     <aside class="notes" data-time="0:45" data-total="1:05">
       <p>Конкуренция за junior-вакансию за 2021→2025 выросла с 8 до 19 резюме на место — это исследование «Зерокодера» на данных hh.ru (Инк., 2026). По hh.индексу в июле 2026 в IT приходится 24,4 резюме на вакансию. Собеседование стало редким шансом, и провалить его дорого.</p>
       <p>При этом готовятся вслепую: по общим спискам вопросов, через дорогой живой mock-собес, который не повторишь пять раз, или через ChatGPT: он ответит на вопросы, но сценарий, оценку и прогресс придётся выстраивать самому.</p>
+      <p>Это подтверждает наш опрос: из 22 опрошенных студентов и джунов 10 не готовятся никак, 9 готовятся через ChatGPT или YandexGPT, 10 — по спискам вопросов (можно было выбрать несколько вариантов).</p>
     </aside>
   </section>
 
@@ -1197,10 +1130,10 @@
       <span class="chip">Опытные специалисты после перерыва</span>
     </div>
 
-    <div class="plaque vc-bot anim d7">Доли сегментов и готовность платить — гипотеза, проверяем в CustDev</div>
+    <div class="plaque vc-bot anim d7">Опрос, 22 ответа: 13 — Backend, 9 ищут работу сейчас. Доли сегментов и готовность платить — гипотеза, проверяем в интервью</div>
     <aside class="notes" data-time="0:30" data-total="1:35">
       <p>Фокус MVP — два сегмента: джуны в IT, для которых первое собеседование — чёрный ящик, и люди в карьерном переходе: знания есть, а продать себя пока не умеют. Дальше — студенты старших курсов и опытные специалисты после перерыва.</p>
-      <p>По оценке «Зерокодера», в 2026–2029 на рынок выйдут 300 000+ студентов IT. Доли сегментов и готовность платить мы пока не утверждаем — это гипотеза, проверяем в CustDev.</p>
+      <p>По оценке «Зерокодера», в 2026–2029 на рынок выйдут 300 000+ студентов IT. В нашем опросе 22 человек: 13 — Backend, 9 ищут работу прямо сейчас. Доли сегментов и готовность платить мы пока не утверждаем — это гипотеза, проверяем в интервью.</p>
     </aside>
   </section>
 
@@ -1262,7 +1195,7 @@
       <button type="button" class="chapter" data-t="3">Вакансия</button>
       <button type="button" class="chapter" data-t="13">Gap-анализ</button>
       <button type="button" class="chapter" data-t="35">Интервью</button>
-      <button type="button" class="chapter" data-t="246">Отчёт</button>
+      <button type="button" class="chapter" data-t="174">Отчёт</button>
       <span class="grow"></span>
       <button type="button" class="speed active" data-rate="4">×4</button>
       <button type="button" class="speed" data-rate="1">×1</button>
@@ -1375,9 +1308,9 @@
       <div class="card val-col done anim d3">
         <span class="mono-label">Сделано</span>
         <ul class="val-list">
-          <li>Работающий продукт: полный цикл от вакансии до плана</li>
-          <li>Развёрнут на сервере: открывается по ссылке, интервью проходится целиком</li>
-          <li>Записан демо-сценарий: вакансия → резюме → интервью → отчёт → план</li>
+          <li>Работающий продукт: полный цикл от вакансии до плана, развёрнут на сервере, записан демо-сценарий</li>
+          <li>CustDev-опрос: 22 ответа студентов и джунов</li>
+          <li>9 человек оставили контакт для интервью или теста продукта</li>
         </ul>
       </div>
       <div class="val-next anim d4">
@@ -1385,7 +1318,7 @@
         <div class="card hyp">
           <span class="mono-label">Проблема</span>
           <div class="text">Бесплатные инструменты (ChatGPT, тренажёр Т1) не решают подготовку к конкретной вакансии</div>
-          <div class="how">Как проверяем: CustDev-интервью — чем не устраивают</div>
+          <div class="how">Опрос: 9 из 22 готовятся через ChatGPT; трудность — страх и «непонятно, что тренировать»</div>
         </div>
         <div class="card hyp">
           <span class="mono-label">Ценность</span>
@@ -1395,12 +1328,13 @@
         <div class="card hyp">
           <span class="mono-label">Деньги</span>
           <div class="text">Джуны готовы заплатить 490 ₽ за пакет</div>
-          <div class="how">Как проверяем: траты на подготовку (опрос + интервью), кнопка оплаты</div>
+          <div class="how">Опрос: платили 3 из 22, двое — больше 5 000 ₽. Дальше — кнопка оплаты</div>
         </div>
       </div>
     </div>
     <aside class="notes" data-time="0:40" data-total="5:25">
-      <p>Что уже есть: работающий продукт — полный цикл от вакансии до плана подготовки; он развёрнут на сервере и открывается по ссылке; демо-сценарий записан. Дальше — проверка гипотез на живых людях.</p>
+      <p>Что уже есть: работающий продукт — полный цикл от вакансии до плана подготовки, развёрнут на сервере, демо-сценарий записан. Провели CustDev-опрос: 22 ответа, из них 9 человек оставили контакт для интервью или теста.</p>
+      <p>Что показал опрос: 9 из 22 готовятся через ChatGPT или YandexGPT, 10 — никак; из 13 описавших главную трудность 7 назвали страх или «непонятно, что тренировать». За подготовку платили 3 из 22, двое — больше 5 000 ₽. Это не проверка цены 490 ₽, а подтверждение, что платящие есть.</p>
       <p>Проверяем три гипотезы. Проблема: бесплатные инструменты — ChatGPT, тренажёр Т1 — не решают подготовку к конкретной вакансии; в CustDev выясняем, чем именно не устраивают. Ценность: Sokrat реально учит — средняя оценка ответов растёт от 1-й к 3-й сессии; проверяем на тестовых пользователях, сравнивая сессии. Деньги: джуны готовы заплатить 490 ₽ за пакет; выясняем траты на подготовку (опрос + интервью) и ставим кнопку оплаты.</p>
     </aside>
   </section>
@@ -1416,7 +1350,7 @@
         <div class="card tl-card">
           <div class="tl-when">Октябрь–ноябрь</div>
           <ul>
-            <li>15 CustDev-интервью</li>
+            <li>15 CustDev-интервью (9 контактов из опроса уже есть)</li>
             <li>Надёжное хранение данных, согласие на ПДн, аналитика</li>
           </ul>
         </div>
@@ -1453,7 +1387,7 @@
       </div>
     </div>
     <aside class="notes" data-time="0:40" data-total="6:05">
-      <p>Октябрь–ноябрь: 15 CustDev-интервью; надёжное хранение данных, согласие на ПДн и аналитика. Декабрь: 20 первых пользователей; цель — не меньше 60% доходят до отчёта и не меньше 30% возвращаются на 2-ю сессию.</p>
+      <p>Октябрь–ноябрь: 15 CustDev-интервью — девять контактов из опроса уже есть; надёжное хранение данных, согласие на ПДн и аналитика. Декабрь: 20 первых пользователей; цель — не меньше 60% доходят до отчёта и не меньше 30% возвращаются на 2-ю сессию.</p>
       <p>Q1 2027: пилот с карьерным центром Волгатеха и запуск оплаты. Дальше — B2B-кабинет для вузов и школ и голосовой режим.</p>
     </aside>
   </section>
@@ -1494,142 +1428,36 @@
     </div>
     <aside class="notes" data-time="0:35" data-total="6:40">
       <p>Нас трое, 2 курс, ПС-21, Волгатех: Иван — фронтенд, промпты, дизайн; Илья — бэкенд; Никита — аналитика и тестирование.</p>
-      <p>Просим: ментора по B2B-продажам в EdTech, знакомство с карьерным центром Волгатеха, доступ к студентам для CustDev и поддержку заявки на грант „Студенческий стартап“ — очередь 2027 года. Спасибо! Дальше — приложение для вопросов.</p>
+      <p>Просим: ментора по B2B-продажам в EdTech, знакомство с карьерным центром Волгатеха, доступ к студентам для CustDev и поддержку заявки на грант „Студенческий стартап“ — очередь 2027 года. Спасибо! Дальше — ответы на вопросы жюри.</p>
     </aside>
   </section>
 
-  <!-- ════════════ Приложение — разделитель ════════════ -->
-  <section class="slide s-divider s-app" data-label="—" data-part="app" aria-label="Приложение">
-    <div class="slide-tag anim d1">Приложение</div>
-    <div class="big anim d2">Ответы на вопросы жюри</div>
-    <ol class="anim d3">
-      <li><b>1</b> Архитектура и стек</li>
-      <li><b>2</b> Персональные данные и 152-ФЗ</li>
-      <li><b>3</b> Риски и как закрываем</li>
-    </ol>
-    <aside class="notes" data-time="—" data-total="—">
-      <p>Запасные слайды. Открываем по вопросу жюри: точка в навигации справа от разделителя.</p>
-    </aside>
-  </section>
+  <!-- ════════════ 11 — Ответы на вопросы жюри (финальный слайд) ════════════ -->
+  <section class="slide s-qa" data-label="11" aria-label="Ответы на вопросы жюри">
+    <div class="slide-tag anim d1"><span class="num">11</span> Вопросы</div>
+    <h2 class="section-title anim d2">Ответы на вопросы жюри</h2>
 
-  <!-- ════════════ Приложение 1/3 — Архитектура ════════════ -->
-  <section class="slide s-app" data-label="1/3" data-part="app" aria-label="Архитектура и стек">
-    <div class="slide-tag anim d1">Приложение · <span class="num">1/3</span></div>
-    <h2 class="section-title anim d2">Архитектура и стек</h2>
-
-    <div class="arch vc-top anim d3">
-      <div class="card arch-box">
-        <span class="mono-label">Клиент</span>
-        <h4>Браузер</h4>
-        <p>Статический фронтенд без сборки: HTML + JS, hash-роутинг</p>
+    <div class="qa-grid vc-top vc-bot">
+      <div class="card qa anim d3">
+        <span class="mono-label">Стек</span>
+        <h4>На чём это сделано</h4>
+        <p>Браузерный фронтенд без сборки, бэкенд на FastAPI, движок интервью на Python. LLM — DeepSeek, запасной провайдер — OpenRouter. Вакансии — hh.ru API, голос — SaluteSpeech. Развёрнуто в Docker.</p>
       </div>
-      <div class="card arch-box">
-        <span class="mono-label">API</span>
-        <h4><span class="lat">FastAPI</span></h4>
-        <ul>
-          <li><code>web/server.py</code></li>
-          <li>Вход по логину, хеш пароля PBKDF2, подписанная cookie</li>
-        </ul>
+      <div class="card qa anim d4">
+        <span class="mono-label">152-ФЗ</span>
+        <h4>Что с персональными данными</h4>
+        <p>Email, телефоны и соцсети вырезаем из резюме до отправки в LLM; файл удаляется после разбора; аудио не сохраняем. Сейчас имя, работодатели и ответы доходят до LLM-провайдера — закрываем согласием, удалением аккаунта и хостингом в РФ.</p>
       </div>
-      <div class="card arch-box">
-        <span class="mono-label">Движок интервью · <code>sokrat/engine.py</code></span>
-        <ul>
-          <li>Разбор вакансии, профиль компании</li>
-          <li>Резюме → gap-анализ</li>
-          <li>Вопросы под вакансию и резюме</li>
-          <li>Анализ каждого ответа + STAR</li>
-          <li>Отчёт, индекс готовности, план на 7 дней</li>
-        </ul>
-      </div>
-      <div class="card arch-box ext">
-        <span class="mono-label">Внешние сервисы</span>
-        <ul>
-          <li>LLM: DeepSeek, запасной провайдер — OpenRouter</li>
-          <li>hh.ru API: вакансии и работодатели (по токену приложения)</li>
-          <li>SaluteSpeech: голос, опционально</li>
-        </ul>
-      </div>
-    </div>
-
-    <div class="card arch-store vc-bot anim d4">
-      <span class="mono-label">Хранение</span>
-      <span>JSON-файлы: пользователи и завершённые сессии · идущее интервью — в памяти процесса · деплой в Docker</span>
-    </div>
-    <aside class="notes" data-time="—" data-total="—">
-      <p>Если спросят про стек: браузерный фронтенд без сборки → FastAPI → собственный движок интервью (engine.py) → DeepSeek через OpenAI-совместимый клиент, hh.ru API, опционально SaluteSpeech. Хранилище пока на JSON-файлах — переход на нормальное хранилище стоит в дорожной карте на октябрь–ноябрь.</p>
-    </aside>
-  </section>
-
-  <!-- ════════════ Приложение 2/3 — Персональные данные ════════════ -->
-  <section class="slide s-app" data-label="2/3" data-part="app" aria-label="Персональные данные и 152-ФЗ">
-    <div class="slide-tag anim d1">Приложение · <span class="num">2/3</span></div>
-    <h2 class="section-title anim d2">Персональные данные и <span class="lat">152</span>-ФЗ</h2>
-
-    <div class="pd-grid vc-top">
-      <div class="card pd-col keep anim d3">
-        <span class="mono-label">Что храним</span>
-        <ul>
-          <li>Логин и хеш пароля (PBKDF2)</li>
-          <li>Завершённые сессии: ответы, оценки, отзыв</li>
-          <li>Профиль из резюме: навыки, опыт, проекты; gap-анализ</li>
-        </ul>
-      </div>
-      <div class="card pd-col cut anim d4">
-        <span class="mono-label">Что вырезаем / не храним</span>
-        <ul>
-          <li>Email, телефоны, ссылки на соцсети вырезаются из резюме до отправки в LLM</li>
-          <li>Файл резюме удаляется сразу после разбора</li>
-          <li>Аудио с микрофона не сохраняется</li>
-        </ul>
-      </div>
-      <div class="card pd-col plan anim d5">
-        <span class="mono-label">Что планируем</span>
-        <ul>
-          <li>Согласие на обработку ПДн в интерфейсе</li>
-          <li>Удаление аккаунта и своих сессий</li>
-          <li>Политика сроков хранения</li>
-          <li>Вырезание имени и работодателей до LLM</li>
-          <li>Хостинг в РФ (локализация ПДн)</li>
-          <li>Уведомление Роскомнадзора о трансграничной передаче (LLM-провайдер)</li>
-        </ul>
-      </div>
-    </div>
-
-    <div class="plaque pd-note vc-bot anim d6">Сейчас имя, работодатели и текст ответов доходят до LLM-провайдера — закрываем этапом «согласие на обработку ПДн»</div>
-    <aside class="notes" data-time="—" data-total="—">
-      <p>Честно говорим, что храним и чего пока нет. Контакты из резюме вырезаем до LLM, файл резюме не храним. Согласия, удаления аккаунта и политики хранения пока нет — это первый этап дорожной карты.</p>
-    </aside>
-  </section>
-
-  <!-- ════════════ Приложение 3/3 — Риски ════════════ -->
-  <section class="slide s-app" data-label="3/3" data-part="app" aria-label="Риски">
-    <div class="slide-tag anim d1">Приложение · <span class="num">3/3</span></div>
-    <h2 class="section-title anim d2">Риски и как закрываем</h2>
-
-    <div class="risk-list vc-top vc-bot">
-      <div class="card risk anim d3">
-        <div class="q">Оценка ответа от LLM может быть неточной</div>
-        <div class="a">Калибровка: сравниваем оценки модели с ручной разметкой ответов; разбор по критериям</div>
-      </div>
-      <div class="card risk anim d4">
-        <div class="q">Расходы на LLM без квот: интервью доступны без входа</div>
-        <div class="a">Лимиты на сессии и вход для полного цикла — вместе с запуском оплаты</div>
-      </div>
-      <div class="card risk anim d5">
-        <div class="q">Хранение на JSON-файлах, идущее интервью — в памяти процесса</div>
-        <div class="a">Хранилище — первый этап дорожной карты (октябрь–ноябрь)</div>
-      </div>
-      <div class="card risk anim d6">
-        <div class="q">Нет автотестов</div>
-        <div class="a">Тесты на критичный путь: остановка интервью, оценка, сохранение, авторизация</div>
-      </div>
-      <div class="card risk anim d7">
-        <div class="q">Конкуренция с бесплатным ChatGPT</div>
-        <div class="a">Интервью под вакансию, gap-анализ, индекс готовности и прогресс между сессиями — то, чего нет в обычном чате</div>
+      <div class="card qa anim d5">
+        <span class="mono-label">Риски</span>
+        <h4>Что может пойти не так</h4>
+        <p>Точность оценки LLM — калибруем на ручной разметке. Расходы без квот — лимиты вместе с оплатой. Хранение в JSON — переход на базу в октябре–ноябре. Автотестов пока нет — пишем на критичный путь.</p>
       </div>
     </div>
     <aside class="notes" data-time="—" data-total="—">
-      <p>Риски называем сами, раньше жюри: точность оценки, расходы на LLM у анонимов, временное хранилище, отсутствие тестов, конкуренция с бесплатным чатом. По каждому — что делаем.</p>
+      <p><b>Стек.</b> Браузерный фронтенд без сборки (HTML + JS), API на FastAPI, вход по логину с хешем пароля PBKDF2 и подписанной cookie. Движок интервью: разбор вакансии и профиль компании, резюме и gap-анализ, вопросы под вакансию, анализ каждого ответа и STAR, отчёт, индекс готовности и план на 7 дней. Внешние сервисы: DeepSeek (запасной — OpenRouter), hh.ru API по токену приложения, SaluteSpeech для голоса. Хранение: JSON-файлы с пользователями и завершёнными сессиями, идущее интервью — в памяти процесса. Деплой — Docker.</p>
+      <p><b>Персональные данные.</b> Храним логин и хеш пароля, завершённые сессии (ответы, оценки, отзыв), профиль из резюме. Вырезаем email, телефоны и соцсети до отправки в LLM; файл резюме удаляется сразу после разбора; аудио не сохраняется. В планах: согласие на обработку ПДн в интерфейсе, удаление аккаунта и сессий, политика сроков хранения, вырезание имени и работодателей до LLM, хостинг в РФ, уведомление Роскомнадзора о трансграничной передаче. Честно: сейчас имя, работодатели и текст ответов доходят до LLM-провайдера — закрываем этапом «согласие и хранилище».</p>
+      <p><b>Риски.</b> Оценка LLM может быть неточной — сверяем с ручной разметкой, разбор по критериям. Расходы на LLM без квот — интервью доступны без входа; лимиты вводим вместе с оплатой. Хранение на JSON-файлах — первый этап дорожной карты. Нет автотестов — пишем на критичный путь: остановка интервью, оценка, сохранение, авторизация. Конкуренция с бесплатным ChatGPT — наше отличие: интервью под вакансию, gap-анализ, индекс готовности и прогресс между сессиями.</p>
     </aside>
   </section>
 
