@@ -13,3 +13,8 @@ data/sessions/
 *.egg-info/
 data/users.json
 data/.secret
+data/feedback.jsonl
+data/events.jsonl
+data/errors.jsonl
+data/question_ratings.jsonl
+data/cohorts.json

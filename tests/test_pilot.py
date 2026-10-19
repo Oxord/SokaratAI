@@ -56,7 +56,11 @@ def client(tmp_path, monkeypatch):
     from web import server
 
     ratelimit.limiter.reset()
+    from sokrat import metrics as metrics_mod
+
     monkeypatch.setattr(feedback, "FEEDBACK_PATH", tmp_path / "fb.jsonl")
+    monkeypatch.setattr(metrics_mod, "EVENTS_PATH", tmp_path / "events.jsonl")
+    monkeypatch.setattr(metrics_mod, "ERRORS_PATH", tmp_path / "errors.jsonl")
     monkeypatch.setattr(server, "INTERVIEWS_PER_DAY_GUEST", 2)
     return TestClient(server.app)
 
