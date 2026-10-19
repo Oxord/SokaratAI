@@ -115,3 +115,37 @@ def test_admin_and_rating_endpoints(client):
     assert client.get("/admin").status_code == 200
     r = client.post("/api/question-rating", json={"session_id": "abcdef12-3456", "question": "Q?", "value": 0})
     assert r.status_code == 400
+
+
+def test_funnel_and_events(tmp_path):
+    from sokrat.metrics import Metrics, funnel
+
+    ev = tmp_path / "events.jsonl"
+    m = Metrics()
+    for route in ("POST /api/interviews", "POST /api/interviews", "POST /api/interviews/{interview_id}/start",
+                  "POST /api/interviews/{interview_id}/finish"):
+        m.record(route, 200, 0.1, errors_path=tmp_path / "e.jsonl", events_path=ev)
+    m.record("POST /api/interviews", 429, 0.1, errors_path=tmp_path / "e.jsonl", events_path=ev)  # не считается
+    f = funnel(ev)
+    assert f["created"] == 2 and f["started"] == 1 and f["finished"] == 1
+    assert f["start_rate"] == 50.0 and f["finish_rate"] == 100.0
+
+
+def test_pilot_stats(tmp_path):
+    from sokrat.pilot_stats import pilot_stats
+
+    def sess(name, user, ts, pct, vacancy=False):
+        d = {"user_id": user, "finished_at": ts, "started_at": ts.replace("T10", "T09"),
+             "summary": {"percentage": pct}, "scores": [{}] * 5}
+        if vacancy:
+            d["job_vacancy"] = {"company": "X"}
+        (tmp_path / f"{name}.json").write_text(json.dumps(d))
+
+    sess("1", "a", "2026-10-01T10:00:00", 40, True)
+    sess("2", "a", "2026-10-02T10:00:00", 50)
+    sess("3", "a", "2026-10-03T10:00:00", 70)
+    sess("4", "b", "2026-10-01T10:00:00", 60)
+    st = pilot_stats(tmp_path)
+    assert st["sessions"] == 4 and st["vacancy_share"] == 25.0
+    assert st["users"] == 2 and st["returning_share"] == 50.0
+    assert st["avg_growth_pp"] == 30.0 and st["avg_minutes"] == 60.0

@@ -38,7 +38,8 @@ from sokrat.interview_rules import (
     LEVELS,
 )
 from sokrat.llm import llm_configured
-from sokrat.metrics import metrics
+from sokrat.metrics import funnel, metrics
+from sokrat.pilot_stats import pilot_stats
 from sokrat.privacy import delete_user_data
 from sokrat.personas import PERSONAS
 from sokrat.practice import KINDS as PRACTICE_KINDS
@@ -80,6 +81,7 @@ async def security_headers(request: Request, call_next):
             f"{request.method} {getattr(route, 'path', request.url.path)}",
             response.status_code,
             time.perf_counter() - started,
+            is_user=bool(read_token(request.cookies.get(COOKIE_NAME))),
         )
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
@@ -570,6 +572,8 @@ def admin_analytics(user: str = Depends(require_user)) -> dict[str, Any]:
         "feedback": feedback_summary(),
         "comments": recent_comments(),
         "weak_questions": worst_questions(),
+        "funnel": funnel(),
+        "pilot": pilot_stats(),
     }
 
 

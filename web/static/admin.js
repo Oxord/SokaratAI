@@ -33,8 +33,23 @@
 
     const s = a.sessions;
     const routes = Object.entries(m.metrics.routes).sort((x, y) => y[1]['5xx'] - x[1]['5xx'] || y[1].count - x[1].count);
+    const f = a.funnel, p = a.pilot;
+    const pc = (v) => (v === null || v === undefined ? '—' : `${v}%`);
+    const funnelPanel = h('div', { class: 'panel' }, h('h3', {}, 'Воронка и метрики пилота'),
+      h('div', { class: 'grid-3' },
+        stat(f.created, 'интервью создано'),
+        stat(`${f.started} (${pc(f.start_rate)})`, 'начато'),
+        stat(`${f.finished} (${pc(f.finish_rate)})`, 'завершено')),
+      h('div', { class: 'grid-3', style: 'margin-top:12px' },
+        stat(pc(p.vacancy_share), 'сессий по реальной вакансии'),
+        stat(pc(p.returning_share), 'пользователей с ≥2 сессиями'),
+        stat(p.avg_growth_pp === null ? '—' : `${p.avg_growth_pp > 0 ? '+' : ''}${p.avg_growth_pp} п.п.`,
+          `прирост балла (1-я → 3-я сессия), n=${p.users_with_growth}`)),
+      h('p', { class: 'muted', style: 'margin:12px 0 0' },
+        `Средняя сессия: ${p.avg_minutes ?? '—'} мин, ${p.avg_questions ?? '—'} вопросов. Отзыв оставляют ${pc(f.feedback_rate)} завершивших.`));
     root.replaceChildren(
       h('div', { class: 'row' }, h('h2', { style: 'margin:0' }, 'Панель владельца'), h('span', { class: 'grow' }), h('a', { class: 'btn btn-plain', href: '/' }, 'На сайт')),
+      funnelPanel,
       h('div', { class: 'grid-3' },
         stat(s.sessions, 'завершённых интервью'),
         stat(s.unique_users, 'пользователей с аккаунтом'),
