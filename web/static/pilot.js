@@ -150,12 +150,63 @@
     } }, '🖨 PDF'));
   }
 
+  // ── 👍/👎 на вопросах отчёта ───────────────────────────────────────────────
+  function questionRatings(page, sessionId) {
+    page.querySelectorAll('details.acc').forEach((d) => {
+      const body = d.querySelector('.body');
+      const label = d.querySelector('summary span:last-child');
+      if (!body || !label || body.querySelector('.pilot-qrate')) return;
+      const question = label.textContent.replace(/^\d+\.\s*/, '');
+      const key = `pilot-q-${sessionId}-${question.slice(0, 40)}`;
+      const row = h('div', { class: 'pilot-qrate muted' }, 'Вопрос был полезным? ');
+      const send = async (value, btn) => {
+        try {
+          await post('/api/question-rating', { session_id: sessionId, question, value });
+          store.set(key, String(value));
+          row.replaceChildren('Спасибо, учтём ' + (value > 0 ? '👍' : '👎'));
+        } catch (e) { toast(e.message, true); }
+      };
+      if (store.get(key)) { row.replaceChildren('Спасибо, учтём ' + (store.get(key) === '1' ? '👍' : '👎')); }
+      else {
+        row.append(
+          h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'aria-label': 'Полезный вопрос', onclick: () => send(1) }, '👍'),
+          ' ',
+          h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'aria-label': 'Слабый вопрос', onclick: () => send(-1) }, '👎'));
+      }
+      body.append(row);
+    });
+  }
+
+  // ── пример разбора на лендинге ────────────────────────────────────────────
+  function sampleReport(page) {
+    if (page.querySelector('#pilot-sample')) return;
+    const sections = page.querySelectorAll('section.section');
+    if (!sections.length) return;
+    const last = sections[sections.length - 1];
+    const box = h('section', { class: 'section', id: 'pilot-sample' }, h('div', { class: 'container' },
+      h('div', { class: 'section-head' }, h('h2', {}, 'Так выглядит разбор ответа'),
+        h('p', { class: 'muted' }, 'Пример: вопрос, ответ кандидата и обратная связь Сократа.')),
+      h('div', { class: 'panel stack' },
+        h('div', {}, h('b', {}, 'Вопрос: '), 'Чем список отличается от кортежа в Python и когда что использовать?'),
+        h('div', {}, h('b', {}, 'Ответ: '), 'Список можно менять, кортеж нельзя. Кортежи удобнее, когда данные не должны меняться.'),
+        h('div', { class: 'fb needs_work' },
+          h('div', { class: 'fb-head' }, h('span', { class: 'score-pill' }, '5/10'), h('b', {}, 'Верно, но поверхностно')),
+          h('p', {}, 'Ты правильно назвал главное отличие — изменяемость. Не хватило следствий: кортеж можно использовать как ключ словаря и он чуть легче по памяти. На реальном собесе тебя бы спросили: «Почему кортеж можно сделать ключом словаря?»'),
+          h('ul', {},
+            h('li', {}, '✅ Изменяемость списка и неизменяемость кортежа'),
+            h('li', {}, '🟡 Когда использовать кортеж — названо без примера'),
+            h('li', {}, '❌ Хешируемость и использование как ключа'))))));
+    last.before(box);
+  }
+
   // ── достройка страниц ─────────────────────────────────────────────────────
   function enhance() {
+    const hero = root.querySelector('.hero');
+    if (hero && !(location.hash || '').split('/')[1]) { sampleReport(root); return; }
     const page = root.querySelector('.container.report');
     if (!page) return;
     const [, a, b] = (location.hash || '').split('/');
-    if ((a === 'report' || a === 'saved') && b) printButton(page);
+    if ((a === 'report' || a === 'saved') && b) { printButton(page); questionRatings(page, b); }
     if ((a === 'report' || a === 'saved') && b && !page.querySelector('#pilot-feedback')) {
       page.append(feedbackPanel(b));
     } else if (a === 'cabinet') {

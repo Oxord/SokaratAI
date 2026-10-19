@@ -95,3 +95,23 @@ def test_metrics_counts_and_logs_5xx(tmp_path):
 def test_active_and_admin_require_login(client):
     assert client.get("/api/interviews/active").status_code == 401
     assert client.get("/api/admin/stats").status_code == 401
+
+
+def test_question_ratings_replace_and_rank(tmp_path):
+    from sokrat import question_ratings as qr
+
+    path = tmp_path / "qr.jsonl"
+    qr.rate_question(session_id="s1", user="a", question="Что такое GIL?", value=1, path=path)
+    qr.rate_question(session_id="s1", user="a", question="что  такое gil?", value=-1, path=path)  # замена
+    qr.rate_question(session_id="s2", user="b", question="Что такое GIL?", value=-1, path=path)
+    qr.rate_question(session_id="s2", user="b", question="Хороший вопрос", value=1, path=path)
+    worst = qr.worst_questions(path=path)
+    assert len(worst) == 1 and worst[0]["down"] == 2 and worst[0]["up"] == 0
+    assert qr.delete_user_ratings("a", path=path) == 1
+
+
+def test_admin_and_rating_endpoints(client):
+    assert client.get("/api/admin/analytics").status_code == 401
+    assert client.get("/admin").status_code == 200
+    r = client.post("/api/question-rating", json={"session_id": "abcdef12-3456", "question": "Q?", "value": 0})
+    assert r.status_code == 400

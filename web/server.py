@@ -20,7 +20,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from sokrat.config import SESSIONS_DIR
-from sokrat.feedback import save_feedback, summary as feedback_summary
+from sokrat.analytics import aggregate as aggregate_sessions
+from sokrat.feedback import recent_comments, save_feedback, summary as feedback_summary
+from sokrat.question_ratings import rate_question, worst_questions
 from sokrat.engine import (
     PRESET_ROLES,
     EngineError,
@@ -558,6 +560,36 @@ def admin_stats(user: str = Depends(require_user)) -> dict[str, Any]:
     return {"metrics": metrics.snapshot(), "feedback": feedback_summary()}
 
 
+@app.get("/api/admin/analytics")
+def admin_analytics(user: str = Depends(require_user)) -> dict[str, Any]:
+    """Сводка для владельца: агрегаты по сессиям (без ответов), отзывы, слабые вопросы."""
+    if user not in _ADMINS:
+        raise HTTPException(status_code=404, detail="Не найдено.")
+    return {
+        "sessions": aggregate_sessions(),
+        "feedback": feedback_summary(),
+        "comments": recent_comments(),
+        "weak_questions": worst_questions(),
+    }
+
+
+class QuestionRatingBody(BaseModel):
+    session_id: str = Field(max_length=64)
+    question: str = Field(max_length=600)
+    value: int = Field(ge=-1, le=1)
+    role: str = Field(default="", max_length=100)
+
+
+@app.post("/api/question-rating", dependencies=[Depends(heavy_limit)])
+def question_rating(body: QuestionRatingBody, user: str = Depends(current_user)) -> dict[str, bool]:
+    if not _SESSION_ID_RE.match(body.session_id) or body.value == 0 or not body.question.strip():
+        raise HTTPException(status_code=400, detail="Некорректная оценка.")
+    rate_question(
+        session_id=body.session_id, user=user, question=body.question, value=body.value, role=body.role
+    )
+    return {"ok": True}
+
+
 class DeleteDataBody(BaseModel):
     password: str = Field(max_length=200)
     delete_account: bool = False
@@ -585,6 +617,12 @@ def delete_data(
 
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR)), name="public")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/admin")
+def admin_page() -> FileResponse:
+    # Страница сама по себе безвредна: данные отдаются только админам через /api/admin/*.
+    return FileResponse(STATIC_DIR / "admin.html")
 
 
 @app.get("/")

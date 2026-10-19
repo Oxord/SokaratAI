@@ -14,6 +14,7 @@ from typing import Any
 from . import users
 from .config import SESSIONS_DIR
 from .feedback import delete_user_feedback
+from .question_ratings import delete_user_ratings
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +49,6 @@ def delete_user_data(
         for key in [k for k, v in list(live_sessions.items()) if getattr(v, "user_id", "") == user]:
             live_sessions.pop(key, None)
 
-    feedback_removed = delete_user_feedback(user)
+    feedback_removed = delete_user_feedback(user) + delete_user_ratings(user)
     account = users.delete(user) if delete_account else False
     return {"sessions": removed, "feedback": feedback_removed, "account": account}

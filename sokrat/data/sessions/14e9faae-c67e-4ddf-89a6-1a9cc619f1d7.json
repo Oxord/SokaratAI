@@ -1,0 +1,241 @@
+{
+  "session_id": "14e9faae-c67e-4ddf-89a6-1a9cc619f1d7",
+  "started_at": "2026-04-25T15:50:42.578605+00:00",
+  "role": "Python Developer",
+  "role_category": "tech",
+  "level": "Junior",
+  "interview_type": "technical",
+  "interview_mode": "quick",
+  "required_skills": [],
+  "is_custom_role": false,
+  "questions": [
+    {
+      "id": "gen_e443829b87",
+      "question": "Что такое генераторы в Python и чем они отличаются от обычных функций? Приведи простой пример.",
+      "hints": [
+        "использование yield вместо return",
+        "ленивое вычисление значений",
+        "экономия памяти",
+        "можно итерировать только один раз"
+      ],
+      "ideal_keywords": [
+        "yield",
+        "генератор",
+        "итератор",
+        "ленивое вычисление",
+        "память",
+        "next()",
+        "StopIteration",
+        "итерация"
+      ]
+    },
+    {
+      "id": "gen_d0c3c100f2",
+      "question": "Объясни разницу между методами строк find() и index() в Python. Что произойдёт, если искомая подстрока не найдена?",
+      "hints": [
+        "Описать поведение find() при отсутствии подстроки",
+        "Описать поведение index() при отсутствии подстроки",
+        "Упомянуть возвращаемые значения",
+        "Когда использовать каждый метод"
+      ],
+      "ideal_keywords": [
+        "find",
+        "index",
+        "подстрока",
+        "ValueError",
+        "-1",
+        "исключение",
+        "строковые методы",
+        "поиск"
+      ]
+    },
+    {
+      "id": "gen_73726192fb",
+      "question": "Объясни разницу между методами append() и extend() для списков. Что произойдёт, если использовать каждый из них с аргументом [1, 2, 3]?",
+      "hints": [
+        "append добавляет элемент целиком",
+        "extend добавляет каждый элемент по отдельности",
+        "разная длина результирующего списка",
+        "можно показать на примере"
+      ],
+      "ideal_keywords": [
+        "append",
+        "extend",
+        "элемент",
+        "итерируемый объект",
+        "длина списка",
+        "вложенный список",
+        "распаковка"
+      ]
+    },
+    {
+      "id": "py_junior_tech_4",
+      "question": "Что такое GIL и как он влияет на многопоточный код?",
+      "hints": [
+        "Global Interpreter Lock",
+        "потоки",
+        "CPU-bound",
+        "I/O-bound"
+      ],
+      "ideal_keywords": [
+        "GIL",
+        "поток",
+        "thread",
+        "lock",
+        "CPU",
+        "IO",
+        "интерпретатор"
+      ]
+    },
+    {
+      "id": "py_junior_tech_6",
+      "question": "Что такое list comprehension и когда ты предпочитаешь его обычному циклу?",
+      "hints": [
+        "синтаксический сахар",
+        "читаемость",
+        "производительность"
+      ],
+      "ideal_keywords": [
+        "comprehension",
+        "цикл",
+        "loop",
+        "читаемость",
+        "выражение",
+        "inline"
+      ]
+    },
+    {
+      "id": "gen_1972c60b8e",
+      "question": "Что такое исключения (exceptions) в Python и как с ними работать? Приведи пример использования try-except блока.",
+      "hints": [
+        "Объяснить назначение исключений",
+        "Показать синтаксис try-except",
+        "Упомянуть finally или else",
+        "Привести конкретный пример"
+      ],
+      "ideal_keywords": [
+        "try",
+        "except",
+        "finally",
+        "raise",
+        "Exception",
+        "обработка ошибок",
+        "ValueError",
+        "TypeError"
+      ]
+    }
+  ],
+  "question_num": 1,
+  "answers": [
+    "не знаю, давай пропкстим вопрос"
+  ],
+  "scores": [
+    {
+      "score": 0,
+      "verdict": "Пропущено",
+      "feedback": "Окей, пропускаем этот вопрос. Бывает — не все темы знакомы сразу.",
+      "strengths": [],
+      "weaknesses": [],
+      "category": "other",
+      "intent": "skip",
+      "skills_touched": [],
+      "question_id": "gen_e443829b87",
+      "role_fit": null,
+      "structure": null,
+      "literacy": null,
+      "oratory": null,
+      "depth": null,
+      "pace": null,
+      "elapsed_seconds": 35.2,
+      "ideal_answer": "Генераторы в Python — это функции, которые используют ключевое слово yield вместо return. Они возвращают объект-генератор, который можно итерировать. Главное отличие от обычных функций: генераторы не вычисляют все значения сразу, а создают их по одному при каждом обращении (ленивое вычисление). Это экономит память при работе с большими данными. Простой пример: def count_up_to(n): i = 1; while i <= n: yield i; i += 1. Вызов count_up_to(3) вернёт генератор, который при итерации выдаст 1, 2, 3."
+    }
+  ],
+  "summary": {
+    "avg_score": 0,
+    "total_score": 0,
+    "max_possible": 0,
+    "percentage": 0.0,
+    "verdict": "Needs Work",
+    "strengths": [],
+    "improvements": [],
+    "skipped_count": 1,
+    "counted_count": 0,
+    "recommendation": "Есть над чем поработать. Не расстраивайся — это именно то, для чего и создан Сократ. Повтори фундаментальные концепции по темам из раздела «Над чем поработать». Попробуй пройти интервью ещё раз через несколько дней — результат улучшится.",
+    "per_question": [
+      {
+        "score": 0,
+        "verdict": "Пропущено",
+        "feedback": "Окей, пропускаем этот вопрос. Бывает — не все темы знакомы сразу.",
+        "strengths": [],
+        "weaknesses": [],
+        "category": "other",
+        "intent": "skip",
+        "skills_touched": [],
+        "question_id": "gen_e443829b87",
+        "role_fit": null,
+        "structure": null,
+        "literacy": null,
+        "oratory": null,
+        "depth": null,
+        "pace": null,
+        "elapsed_seconds": 35.2,
+        "ideal_answer": "Генераторы в Python — это функции, которые используют ключевое слово yield вместо return. Они возвращают объект-генератор, который можно итерировать. Главное отличие от обычных функций: генераторы не вычисляют все значения сразу, а создают их по одному при каждом обращении (ленивое вычисление). Это экономит память при работе с большими данными. Простой пример: def count_up_to(n): i = 1; while i <= n: yield i; i += 1. Вызов count_up_to(3) вернёт генератор, который при итерации выдаст 1, 2, 3."
+      }
+    ],
+    "skills_coverage": [],
+    "dimensions": {
+      "role_fit": 0.0,
+      "structure": 0.0,
+      "literacy": 0.0,
+      "oratory": 0.0,
+      "depth": 0.0,
+      "pace": 0.0
+    },
+    "total_time_seconds": 35.2,
+    "avg_time_seconds": 35.2,
+    "resources": [
+      {
+        "topic": "Что такое генераторы в Python и чем они отличаются от обычных функций?",
+        "why_to_study": "Генераторы — важный инструмент для эффективной работы с памятью и создания итераторов, который часто спрашивают на собеседованиях.",
+        "resources": [
+          {
+            "title": "Generators",
+            "type": "docs",
+            "source": "Python Documentation",
+            "url": "https://docs.python.org/3/tutorial/classes.html#generators",
+            "search_query": "python generators official documentation"
+          },
+          {
+            "title": "Effective Python",
+            "type": "book",
+            "source": "Brett Slatkin",
+            "url": null,
+            "search_query": "effective python brett slatkin generators"
+          },
+          {
+            "title": "Python Generators Explained",
+            "type": "video",
+            "source": "Corey Schafer",
+            "url": null,
+            "search_query": "corey schafer python generators youtube"
+          },
+          {
+            "title": "Генераторы в Python: полное руководство",
+            "type": "article",
+            "source": "Habr",
+            "url": null,
+            "search_query": "генераторы python полное руководство habr"
+          },
+          {
+            "title": "Python Iterators and Generators",
+            "type": "course",
+            "source": "Real Python",
+            "url": null,
+            "search_query": "real python iterators generators course"
+          }
+        ]
+      }
+    ]
+  },
+  "current_step": "persist"
+}
