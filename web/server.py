@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from sokrat.config import SESSIONS_DIR
+from sokrat.feedback import save_feedback
 from sokrat.engine import (
     PRESET_ROLES,
     EngineError,
@@ -34,8 +35,16 @@ from sokrat.interview_rules import (
     LEVELS,
 )
 from sokrat.llm import llm_configured
+from sokrat.privacy import delete_user_data
 from sokrat.personas import PERSONAS
 from sokrat.practice import KINDS as PRACTICE_KINDS
+from sokrat.ratelimit import (
+    HEAVY_PER_MINUTE,
+    INTERVIEWS_PER_DAY_GUEST,
+    INTERVIEWS_PER_DAY_USER,
+    format_wait,
+    limiter,
+)
 from sokrat.stt import SaluteSpeechError, get_stt_client, tts_enabled
 from sokrat.users import register, validate_credentials, verify
 from web.auth import COOKIE_NAME, SESSION_DAYS, LoginThrottle, make_token, read_token
@@ -105,6 +114,33 @@ def _set_cookie(response: Response, username: str) -> None:
         samesite="lax",
         secure=_SECURE_COOKIE,
     )
+
+
+def _client_key(request: Request, user: str) -> str:
+    if user:
+        return f"u:{user}"
+    return f"ip:{request.client.host if request.client else '?'}"
+
+
+def heavy_limit(request: Request, user: str = Depends(current_user)) -> None:
+    """Не больше N обращений в минуту к эндпоинтам, которые ходят в LLM/STT/TTS."""
+    wait = limiter.hit(f"heavy|{_client_key(request, user)}", HEAVY_PER_MINUTE, 60)
+    if wait:
+        raise HTTPException(
+            status_code=429, detail=f"Слишком много запросов. Попробуй {format_wait(wait)}."
+        )
+
+
+def new_interview_limit(request: Request, user: str = Depends(current_user)) -> None:
+    """Суточная квота на новые интервью (гость считается по IP)."""
+    limit = INTERVIEWS_PER_DAY_USER if user else INTERVIEWS_PER_DAY_GUEST
+    wait = limiter.hit(f"new|{_client_key(request, user)}", limit, 86400)
+    if wait:
+        hint = "" if user else " Войди в аккаунт — лимит для аккаунтов выше."
+        raise HTTPException(
+            status_code=429,
+            detail=f"Лимит интервью на сегодня исчерпан, снова можно {format_wait(wait)}.{hint}",
+        )
 
 
 @app.get("/healthz")
@@ -208,7 +244,7 @@ class SolutionBody(BaseModel):
     solution: str = Field(max_length=20000)
 
 
-@app.post("/api/interviews")
+@app.post("/api/interviews", dependencies=[Depends(new_interview_limit)])
 def create_interview(user: str = Depends(current_user)) -> dict[str, Any]:
     iv = engine.create(user)
     return engine.setup_view(iv)
@@ -230,7 +266,7 @@ def load_vacancy(interview_id: str, body: VacancyBody, user: str = Depends(curre
     return engine.load_vacancy(engine.get(interview_id, user), body.text)
 
 
-@app.post("/api/interviews/{interview_id}/resume")
+@app.post("/api/interviews/{interview_id}/resume", dependencies=[Depends(heavy_limit)])
 async def upload_resume(
     interview_id: str,
     file: UploadFile = File(...),
@@ -278,7 +314,7 @@ def current_question(interview_id: str, user: str = Depends(current_user)):
     return engine.current_question(engine.get(interview_id, user))
 
 
-@app.post("/api/interviews/{interview_id}/answer")
+@app.post("/api/interviews/{interview_id}/answer", dependencies=[Depends(heavy_limit)])
 def answer(interview_id: str, body: AnswerBody, user: str = Depends(current_user)):
     return engine.answer(engine.get(interview_id, user), body.text)
 
@@ -310,17 +346,17 @@ def report_md(interview_id: str, user: str = Depends(current_user)):
     )
 
 
-@app.post("/api/interviews/{interview_id}/plan")
+@app.post("/api/interviews/{interview_id}/plan", dependencies=[Depends(heavy_limit)])
 def plan(interview_id: str, body: PlanBody, user: str = Depends(current_user)):
     return engine.study_plan(engine.get(interview_id, user), body.days)
 
 
-@app.post("/api/interviews/{interview_id}/practice")
+@app.post("/api/interviews/{interview_id}/practice", dependencies=[Depends(heavy_limit)])
 def practice(interview_id: str, body: PracticeBody, user: str = Depends(current_user)):
     return engine.practice_generate(engine.get(interview_id, user), body.kind)
 
 
-@app.post("/api/interviews/{interview_id}/practice/solution")
+@app.post("/api/interviews/{interview_id}/practice/solution", dependencies=[Depends(heavy_limit)])
 def practice_solution(
     interview_id: str, body: SolutionBody, user: str = Depends(current_user)
 ):
@@ -329,7 +365,7 @@ def practice_solution(
 
 # ── голос ────────────────────────────────────────────────────────────────────
 
-@app.post("/api/stt")
+@app.post("/api/stt", dependencies=[Depends(heavy_limit)])
 async def speech_to_text(request: Request, user: str = Depends(current_user)):
     client = get_stt_client()
     if client is None:
@@ -353,7 +389,7 @@ class TtsBody(BaseModel):
     text: str = Field(max_length=1500)
 
 
-@app.post("/api/tts")
+@app.post("/api/tts", dependencies=[Depends(heavy_limit)])
 async def text_to_speech(body: TtsBody, user: str = Depends(current_user)):
     client = get_stt_client()
     if client is None or not tts_enabled():
@@ -456,6 +492,52 @@ def saved_session(session_id: str, user: str = Depends(require_user)) -> dict[st
     view["can_plan"] = False
     view["saved"] = True
     return view
+
+
+# ── обратная связь и удаление данных ────────────────────────────────────────
+
+class FeedbackBody(BaseModel):
+    session_id: str = Field(max_length=64)
+    rating: int = Field(ge=1, le=5)
+    realism: int | None = Field(default=None, ge=1, le=5)
+    comment: str = Field(default="", max_length=2000)
+
+
+@app.post("/api/feedback", dependencies=[Depends(heavy_limit)])
+def feedback(body: FeedbackBody, user: str = Depends(current_user)) -> dict[str, bool]:
+    if not _SESSION_ID_RE.match(body.session_id):
+        raise HTTPException(status_code=400, detail="Некорректный номер сессии.")
+    save_feedback(
+        session_id=body.session_id,
+        user=user,
+        rating=body.rating,
+        realism=body.realism,
+        comment=body.comment,
+    )
+    return {"ok": True}
+
+
+class DeleteDataBody(BaseModel):
+    password: str = Field(max_length=200)
+    delete_account: bool = False
+
+
+@app.post("/api/account/delete-data")
+def delete_data(
+    body: DeleteDataBody, response: Response, user: str = Depends(require_user)
+) -> dict[str, Any]:
+    """Удаляет сохранённые сессии и отзывы; с delete_account — и аккаунт. Нужен пароль."""
+    if not verify(user, body.password):
+        raise HTTPException(status_code=403, detail="Неверный пароль.")
+    result = delete_user_data(
+        user,
+        delete_account=body.delete_account,
+        live_sessions=getattr(engine, "_sessions", None),
+    )
+    if result["account"]:
+        response.delete_cookie(COOKIE_NAME)
+    log.info("user data deleted: %s", {k: v for k, v in result.items()})
+    return result
 
 
 # ── статика ──────────────────────────────────────────────────────────────────

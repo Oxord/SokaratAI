@@ -1,0 +1,79 @@
+import json
+
+import pytest
+
+from sokrat import feedback, privacy, users
+from sokrat.ratelimit import RateLimiter
+
+
+def test_ratelimiter_blocks_after_limit_and_zero_disables():
+    rl = RateLimiter()
+    assert rl.hit("k", 2, 60) == 0
+    assert rl.hit("k", 2, 60) == 0
+    assert rl.hit("k", 2, 60) > 0
+    assert rl.hit("other", 2, 60) == 0
+    assert rl.hit("k", 0, 60) == 0
+
+
+def test_feedback_replaces_same_session_and_summarizes(tmp_path):
+    path = tmp_path / "fb.jsonl"
+    feedback.save_feedback(session_id="s1", user="a", rating=2, path=path)
+    feedback.save_feedback(session_id="s1", user="a", rating=4, realism=5, comment="ok", path=path)
+    feedback.save_feedback(session_id="s2", user="b", rating=5, path=path)
+    s = feedback.summary(path)
+    assert s["count"] == 2 and s["avg_rating"] == 4.5 and s["avg_realism"] == 5
+    assert feedback.delete_user_feedback("a", path=path) == 1
+    assert feedback.summary(path)["count"] == 1
+
+
+def test_delete_user_data_only_touches_owner(tmp_path):
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "1.json").write_text(json.dumps({"user_id": "a"}))
+    (sessions / "2.json").write_text(json.dumps({"user_id": "b"}))
+    (sessions / "3.json").write_text(json.dumps({"summary": {}}))  # гостевая
+    (sessions / "bad.json").write_text("{")
+    res = privacy.delete_user_data("a", sessions_dir=sessions, live_sessions={})
+    assert res["sessions"] == 1
+    assert sorted(p.name for p in sessions.glob("*.json")) == ["2.json", "3.json", "bad.json"]
+    assert privacy.delete_user_data("", sessions_dir=sessions)["sessions"] == 0
+
+
+def test_users_delete(tmp_path):
+    store = tmp_path / "users.json"
+    assert users.register("alice", "secret1", path=store)
+    assert users.delete("alice", path=store)
+    assert not users.delete("alice", path=store)
+    assert not users.verify("alice", "secret1", path=store)
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from sokrat import ratelimit
+    from web import server
+
+    ratelimit.limiter.reset()
+    monkeypatch.setattr(feedback, "FEEDBACK_PATH", tmp_path / "fb.jsonl")
+    monkeypatch.setattr(server, "INTERVIEWS_PER_DAY_GUEST", 2)
+    return TestClient(server.app)
+
+
+def test_guest_interview_quota(client):
+    assert client.post("/api/interviews").status_code == 200
+    assert client.post("/api/interviews").status_code == 200
+    r = client.post("/api/interviews")
+    assert r.status_code == 429 and "Лимит" in r.json()["error"]
+
+
+def test_feedback_endpoint_validates(client):
+    ok = client.post("/api/feedback", json={"session_id": "abcdef12-3456", "rating": 5, "realism": 4})
+    assert ok.status_code == 200
+    assert client.post("/api/feedback", json={"session_id": "abcdef12-3456", "rating": 9}).status_code == 422
+    assert client.post("/api/feedback", json={"session_id": "../x", "rating": 3}).status_code == 400
+
+
+def test_delete_data_requires_login(client):
+    assert client.post("/api/account/delete-data", json={"password": "x"}).status_code == 401

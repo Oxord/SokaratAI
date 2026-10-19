@@ -117,3 +117,16 @@ def verify(username: str, password: str, *, path: Path | None = None) -> bool:
     except (KeyError, ValueError):
         return False
     return hmac.compare_digest(_hash(password or "", salt), expected)
+
+
+def delete(username: str, *, path: Path | None = None) -> bool:
+    """Удаляет учётную запись. False, если такого логина нет."""
+    store = path or USERS_PATH
+    name = (username or "").strip().lower()
+    with _lock:
+        users = _load(store)
+        if name not in users:
+            return False
+        del users[name]
+        _save(store, users)
+    return True
