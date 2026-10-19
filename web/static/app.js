@@ -756,6 +756,7 @@
         h('p', { class: 'muted', style: 'margin:0 0 8px' }, `${r.role} · ${r.level} · ${r.type_label}${r.company ? ' · ' + r.company : ''}`),
         h('div', {}, h('span', { class: 'tag' }, `${r.total_score}/${r.max_possible} баллов`),
           h('span', { class: r.answered_count < r.asked_count ? 'tag warn' : 'tag' }, `отвечено ${r.answered_count} из ${r.asked_count}`),
+          r.summary_version < 2 ? h('span', { class: 'tag warn', title: 'Процент посчитан без учёта пропусков' }, 'старая формула') : null,
           r.answered_count ? h('span', { class: 'tag' }, `средний по отвеченным: ${r.avg_score_answered}/10`) : null,
           r.total_time_seconds ? h('span', { class: 'tag' }, `⏱ ${fmtDuration(r.total_time_seconds)}`) : null,
           r.stress ? h('span', { class: 'tag bad' }, '🔥 стресс-режим') : null)));
