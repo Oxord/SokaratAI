@@ -196,7 +196,8 @@
     if (S.user) {
       links.append(
         h('a', { class: 'link', href: '#/cabinet' }, 'Кабинет'),
-        h('button', { class: 'btn btn-plain btn-sm', onclick: logout }, `Выйти (${S.user})`));
+        h('button', { class: 'btn btn-plain btn-sm', onclick: logout, 'aria-label': `Выйти (${S.user})` },
+          h('span', {}, 'Выйти', h('span', { class: 'nav-user' }, ` (${S.user})`))));
     } else {
       links.append(
         h('a', { class: 'link', href: '#/login' }, 'Войти'),
@@ -934,12 +935,12 @@
     if (roles.length) drawChart(roles[0]);
 
     const sessions = c.sessions.length
-      ? h('table', { class: 'table' },
+      ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
         h('thead', {}, h('tr', {}, ['Дата', 'Роль', 'Компания', 'Результат', 'Готовность'].map((t) => h('th', {}, t)))),
         h('tbody', {}, c.sessions.map((x) => h('tr', { class: 'click', tabindex: 0, onclick: () => { location.hash = `#/saved/${x.session_id}`; },
           onkeydown: (e) => { if (e.key === 'Enter') location.hash = `#/saved/${x.session_id}`; } },
         h('td', {}, fmtDate(x.ts)), h('td', {}, `${x.role}${x.level ? ' · ' + x.level : ''}`), h('td', {}, x.company || '—'),
-        h('td', {}, h('b', {}, `${Math.round(x.percentage)}%`), x.summary_version < 2 ? h('span', { class: 'muted' }, ' · старая формула') : null), h('td', {}, x.readiness === null || x.readiness === undefined ? '—' : `${x.readiness}/100`)))))
+        h('td', {}, h('b', {}, `${Math.round(x.percentage)}%`), x.summary_version < 2 ? h('span', { class: 'muted' }, ' · старая формула') : null), h('td', {}, x.readiness === null || x.readiness === undefined ? '—' : `${x.readiness}/100`))))))
       : h('p', { class: 'muted' }, 'Пока нет завершённых интервью. Самое время начать!');
 
     page(h('div', { class: 'container report stack' },

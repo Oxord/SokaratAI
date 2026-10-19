@@ -274,6 +274,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--b
 .acc .body { padding: 6px 18px 16px; }
 .plan-day { border-left: 4px solid var(--blue); padding: 4px 0 4px 16px; margin: 14px 0; }
 .sticky-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 18px 0; }
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table { width: 100%; border-collapse: collapse; }
 .table th, .table td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--line); }
 .table th { color: var(--muted); font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; }
@@ -308,6 +309,9 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--b
   .fb { margin-left: 0; }
   .star-grid { grid-template-columns: 1fr; }
   .nav-links a.link.hide-sm { display: none; }
+}
+@media (max-width: 480px) {
+  .nav-user { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
