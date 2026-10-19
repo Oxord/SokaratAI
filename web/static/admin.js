@@ -26,6 +26,54 @@
     return res.json();
   }
 
+  async function send(path, json) {
+    const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(json) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Ошибка');
+    return data;
+  }
+
+  async function cohortsPanel() {
+    const box = h('div', { class: 'panel stack' });
+    const detail = h('div', {});
+    const draw = async () => {
+      const list = await load('/api/cohorts');
+      const name = h('input', { type: 'text', placeholder: 'Название группы, например «ИТ-31, МИРЭА»', maxlength: 80 });
+      const add = h('button', { type: 'button', class: 'btn btn-primary btn-sm' }, 'Создать группу');
+      add.addEventListener('click', async () => {
+        if (!name.value.trim()) return;
+        try { const r = await send('/api/cohorts', { name: name.value }); await draw(); detail.replaceChildren(h('p', { class: 'info-box' }, `Код для студентов: ${r.code}`)); }
+        catch (e) { detail.replaceChildren(h('p', { class: 'muted' }, e.message)); }
+      });
+      box.replaceChildren(h('h3', { style: 'margin:0' }, '🎓 Группы (вузы, курсы)'),
+        list.length ? h('table', { class: 'table' },
+          h('thead', {}, h('tr', {}, ['Группа', 'Код', 'Участников', ''].map((t) => h('th', {}, t)))),
+          h('tbody', {}, list.map((c) => {
+            const open = h('button', { type: 'button', class: 'btn btn-ghost btn-sm' }, 'Статистика');
+            open.addEventListener('click', async () => showCohort(c.code, detail));
+            return h('tr', {}, h('td', {}, c.name), h('td', {}, c.code), h('td', {}, c.members), h('td', {}, open));
+          })))
+          : h('p', { class: 'muted' }, 'Групп пока нет.'),
+        h('div', { class: 'row' }, name, add), detail);
+    };
+    await draw();
+    return box;
+  }
+
+  async function showCohort(code, target) {
+    const st = await load(`/api/cohorts/${encodeURIComponent(code)}/stats`);
+    const fmt = (v, suf = '') => (v === null || v === undefined ? '—' : `${v}${suf}`);
+    target.replaceChildren(
+      h('h3', {}, `${st.name} · код ${st.code}`),
+      h('div', { class: 'grid-3' }, stat(`${st.active}/${st.members}`, 'участников прошли интервью'), stat(st.sessions, 'сессий'), stat(fmt(st.avg, '%'), 'средний результат')),
+      h('p', { class: 'muted' }, 'Распределение: ' + Object.entries(st.distribution).map(([k, n]) => `${k} — ${n}`).join(' · ')),
+      Object.keys(st.dimensions).length ? h('p', { class: 'muted' }, 'Профиль навыков общения (0–10): ' + Object.entries(st.dimensions).map(([k, v]) => `${k} ${v}`).join(' · ')) : null,
+      st.rows.length ? h('table', { class: 'table' },
+        h('thead', {}, h('tr', {}, ['Студент', 'Сессий', 'Средний', 'Лучший', 'Динамика'].map((t) => h('th', {}, t)))),
+        h('tbody', {}, st.rows.map((r) => h('tr', {}, h('td', {}, r.user), h('td', {}, r.sessions), h('td', {}, fmt(r.avg, '%')), h('td', {}, fmt(r.best, '%')), h('td', {}, r.trend === null ? '—' : `${r.trend > 0 ? '+' : ''}${r.trend} п.п.`)))))
+        : h('p', { class: 'muted' }, 'Пока никто не вступил.'));
+  }
+
   async function main() {
     let a, m;
     try { [a, m] = await Promise.all([load('/api/admin/analytics'), load('/api/admin/stats')]); }
@@ -47,9 +95,11 @@
           `прирост балла (1-я → 3-я сессия), n=${p.users_with_growth}`)),
       h('p', { class: 'muted', style: 'margin:12px 0 0' },
         `Средняя сессия: ${p.avg_minutes ?? '—'} мин, ${p.avg_questions ?? '—'} вопросов. Отзыв оставляют ${pc(f.feedback_rate)} завершивших.`));
+    const cohortBox = await cohortsPanel().catch(() => null);
     root.replaceChildren(
       h('div', { class: 'row' }, h('h2', { style: 'margin:0' }, 'Панель владельца'), h('span', { class: 'grow' }), h('a', { class: 'btn btn-plain', href: '/' }, 'На сайт')),
       funnelPanel,
+      cohortBox,
       h('div', { class: 'grid-3' },
         stat(s.sessions, 'завершённых интервью'),
         stat(s.unique_users, 'пользователей с аккаунтом'),

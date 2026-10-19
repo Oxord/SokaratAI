@@ -122,6 +122,42 @@
         pass, h('div', {}, btn)));
   }
 
+  // ── группа (вуз, курс) ────────────────────────────────────────────────────
+  async function cohortPanel(page) {
+    if (page.querySelector('#pilot-cohort')) return;
+    const box = h('div', { class: 'panel stack', id: 'pilot-cohort' });
+    page.append(box);
+    const render = (cohort) => {
+      if (cohort) {
+        const leave = h('button', { type: 'button', class: 'btn btn-ghost btn-sm' }, 'Выйти из группы');
+        leave.addEventListener('click', async () => {
+          try { await post('/api/cohort/leave', {}); render(null); } catch (e) { toast(e.message, true); }
+        });
+        box.replaceChildren(h('h3', { style: 'margin:0' }, '🎓 Моя группа'),
+          h('p', { style: 'margin:0' }, `${cohort.name} `, h('span', { class: 'muted' }, `· код ${cohort.code}`)),
+          h('p', { class: 'muted', style: 'margin:0' }, 'Преподаватель видит твой логин, число интервью и баллы. Ответы и резюме ему не показываются.'),
+          h('div', {}, leave));
+        return;
+      }
+      const code = h('input', { type: 'text', placeholder: 'Код группы от преподавателя', maxlength: 20, 'aria-label': 'Код группы' });
+      const btn = h('button', { type: 'button', class: 'btn btn-ghost' }, 'Вступить');
+      btn.addEventListener('click', async () => {
+        if (!code.value.trim()) return;
+        btn.disabled = true;
+        try { render((await post('/api/cohort/join', { code: code.value })).cohort); }
+        catch (e) { toast(e.message, true); btn.disabled = false; }
+      });
+      box.replaceChildren(h('h3', { style: 'margin:0' }, '🎓 Группа вуза или курса'),
+        h('p', { class: 'muted', style: 'margin:0' },
+          'Если преподаватель дал код, вступи в группу. Он увидит твой логин, число интервью и баллы (не ответы и не резюме).'),
+        h('div', { class: 'row' }, code, btn));
+    };
+    try {
+      const res = await fetch('/api/cohort', { credentials: 'same-origin' });
+      render(res.ok ? (await res.json()).cohort : null);
+    } catch (e) { box.remove(); }
+  }
+
   // ── продолжить прерванное интервью ────────────────────────────────────────
   let activeLoaded = false;
   async function resumeBanner(page) {
@@ -210,6 +246,7 @@
     if ((a === 'report' || a === 'saved') && b && !page.querySelector('#pilot-feedback')) {
       page.append(feedbackPanel(b));
     } else if (a === 'cabinet') {
+      cohortPanel(page);
       if (!page.querySelector('#pilot-privacy')) page.append(privacyPanel());
       if (!page.querySelector('#pilot-resume')) resumeBanner(page);
     }

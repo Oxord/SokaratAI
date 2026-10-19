@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from sokrat import cohorts
 from sokrat.config import SESSIONS_DIR
 from sokrat.analytics import aggregate as aggregate_sessions
 from sokrat.feedback import recent_comments, save_feedback, summary as feedback_summary
@@ -575,6 +576,61 @@ def admin_analytics(user: str = Depends(require_user)) -> dict[str, Any]:
         "funnel": funnel(),
         "pilot": pilot_stats(),
     }
+
+
+# ── группы (вузы, курсы) ─────────────────────────────────────────────────────
+
+def require_admin(user: str = Depends(require_user)) -> str:
+    if user not in _ADMINS:
+        raise HTTPException(status_code=404, detail="Не найдено.")
+    return user
+
+
+class CohortBody(BaseModel):
+    name: str = Field(max_length=80)
+
+
+class JoinBody(BaseModel):
+    code: str = Field(max_length=20)
+
+
+@app.post("/api/cohorts")
+def cohort_create(body: CohortBody, user: str = Depends(require_admin)) -> dict[str, str]:
+    try:
+        return {"code": cohorts.create_cohort(body.name, user)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/cohorts")
+def cohort_list(_: str = Depends(require_admin)) -> list[dict[str, Any]]:
+    return cohorts.list_cohorts()
+
+
+@app.get("/api/cohorts/{code}/stats")
+def cohort_stats(code: str, _: str = Depends(require_admin)) -> dict[str, Any]:
+    stats = cohorts.cohort_stats(code)
+    if stats is None:
+        raise HTTPException(status_code=404, detail="Группа не найдена.")
+    return stats
+
+
+@app.get("/api/cohort")
+def my_cohort(user: str = Depends(require_user)) -> dict[str, Any]:
+    return {"cohort": cohorts.user_cohort(user)}
+
+
+@app.post("/api/cohort/join", dependencies=[Depends(heavy_limit)])
+def cohort_join(body: JoinBody, user: str = Depends(require_user)) -> dict[str, Any]:
+    name = cohorts.join(user, body.code)
+    if name is None:
+        raise HTTPException(status_code=404, detail="Группы с таким кодом нет.")
+    return {"cohort": {"code": body.code.strip().upper(), "name": name}}
+
+
+@app.post("/api/cohort/leave")
+def cohort_leave(user: str = Depends(require_user)) -> dict[str, bool]:
+    return {"ok": cohorts.leave(user)}
 
 
 class QuestionRatingBody(BaseModel):
