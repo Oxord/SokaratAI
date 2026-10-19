@@ -12,6 +12,16 @@ import threading
 from pathlib import Path
 
 from .question_generator import generate_questions
+from .score_bands import (
+    EXCELLENT,
+    GOOD,
+    NEEDS_WORK,
+    READINESS_MIN_ANSWERS,
+    SKIPPED,
+    STABLE_WEAK_MAX,
+    band,
+    is_weak,
+)
 
 log = logging.getLogger(__name__)
 
@@ -70,7 +80,9 @@ def should_stop_interview(
 ) -> bool:
     if asked >= max_q:
         return True
-    if asked < min_q:
+    # Раньше READINESS_MIN_ANSWERS вопросов не останавливаемся, иначе сильный
+    # кандидат не наберёт ответов на индекс готовности.
+    if asked < max(min_q, min(READINESS_MIN_ANSWERS, max_q)):
         return False
 
     if required_skills:
@@ -90,7 +102,7 @@ def should_stop_interview(
     if len(nonzero) < _STABLE_RUN:
         return False
     tail = nonzero[-_STABLE_RUN:]
-    return all(v >= 8 for v in tail) or all(v <= 3 for v in tail)
+    return all(band(v) == EXCELLENT for v in tail) or all(v <= STABLE_WEAK_MAX for v in tail)
 
 _BANK_LOCK = threading.Lock()
 
@@ -292,7 +304,7 @@ def _extract_weak_topics(
 ) -> list[dict]:
     """Build a unified list of weak topics for the resource generator.
 
-    Combines three signals: weak skills (avg<6), weak answers (score 1-6),
+    Combines three signals: weak skills (avg<GOOD_MIN), weak answers (score 1-5),
     and skipped/dont_know answers (score==0). Deduped by topic name.
     """
     by_key: dict[str, dict] = {}
@@ -301,7 +313,7 @@ def _extract_weak_topics(
         if entry.get("questions_count", 0) <= 0:
             continue
         avg = entry.get("avg_score") or 0.0
-        if not (0 < avg < 6):
+        if not is_weak(avg):
             continue
         skill = str(entry.get("skill", "")).strip()
         if not skill:
@@ -318,7 +330,7 @@ def _extract_weak_topics(
             break
         score_val = s.get("score", 0)
         intent = s.get("intent", "answer")
-        is_weak_answer = 0 < score_val <= 6
+        is_weak_answer = is_weak(score_val)
         is_skipped = score_val == 0 and intent in ("skip", "dont_know")
         if not (is_weak_answer or is_skipped):
             continue
@@ -379,13 +391,14 @@ TYPE_EMOJI = {"technical": "🛠️", "hr": "🤝", "mixed": "🎯"}
 
 def verdict_for_score(score: int) -> tuple[str, str, str]:
     """Returns (verdict_key, emoji, label) based on numeric score."""
-    if score == 0:
-        return "skipped", "⏭️", "Пропущено"
-    if score >= 8:
-        return "excellent", "✅", "Отлично"
-    if score >= 6:
-        return "good", "👍", "Хорошо"
-    return "needs_work", "⚠️", "Можно лучше"
+    key = band(score)
+    if key == SKIPPED:
+        return key, "⏭️", "Пропущено"
+    if key == EXCELLENT:
+        return key, "✅", "Отлично"
+    if key == GOOD:
+        return key, "👍", "Хорошо"
+    return NEEDS_WORK, "⚠️", "Можно лучше"
 
 def _pace_score(seconds: float) -> int:
     """Детерминированная оценка темпа ответа по бакетам (0–10)."""

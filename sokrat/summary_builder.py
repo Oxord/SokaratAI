@@ -4,6 +4,17 @@ Pure logic: takes per-question scores and produces an aggregated report dict
 from __future__ import annotations
 
 from .analyzer import DIMENSION_LABELS
+from .score_bands import (
+    EXCELLENT,
+    MIN_ANSWERED_SHARE,
+    SUMMARY_VERSION,
+    VERDICT_COMPETENT_MIN,
+    VERDICT_STRONG_MIN,
+    band,
+)
+
+INSUFFICIENT = "Insufficient"
+INSUFFICIENT_LABEL = "Недостаточно ответов для вывода"
 
 RECOMMENDATION_TEMPLATES: dict[str, str] = {
     "Strong": (
@@ -21,6 +32,18 @@ RECOMMENDATION_TEMPLATES: dict[str, str] = {
         "Повтори фундаментальные концепции по темам из раздела «Над чем поработать». "
         "Попробуй пройти интервью ещё раз через несколько дней — результат улучшится."
     ),
+    INSUFFICIENT: (
+        "Слишком много вопросов осталось без ответа, чтобы делать вывод об уровне. "
+        "Пропуски и «не знаю» считаются как 0, поэтому процент низкий. "
+        "Пройди интервью ещё раз и постарайся ответить хотя бы коротко на каждый вопрос."
+    ),
+}
+
+VERDICT_LABELS: dict[str, str] = {
+    "Strong": "Сильный результат",
+    "Competent": "Уверенная база",
+    "Needs Work": "Есть над чем поработать",
+    INSUFFICIENT: INSUFFICIENT_LABEL,
 }
 
 
@@ -35,24 +58,42 @@ def compute_dimension_averages(scores: list[dict]) -> dict[str, float]:
 def compute_skills_coverage(
     required_skills: list[str], scores: list[dict]
 ) -> list[dict]:
+    """Покрытие навыков по вопросам, которые их проверяют (skills_touched).
+
+    Пропуск и «не знаю» по навыку входят в среднее как 0. Навык без единого
+    вопроса помечается tested=False и в среднее не попадает.
+    """
     if not required_skills:
         return []
     coverage: list[dict] = []
     for skill in required_skills:
-        hits: list[int] = []
-        for score in scores:
-            touched = score.get("skills_touched") or []
-            if any(t.lower() == skill.lower() for t in touched) and score.get("score", 0) > 0:
-                hits.append(score["score"])
-        avg = round(sum(hits) / len(hits), 1) if hits else 0.0
+        key = skill.lower()
+        values = [
+            int(score.get("score") or 0)
+            for score in scores
+            if any(str(t).lower() == key for t in score.get("skills_touched") or [])
+        ]
         coverage.append(
             {
                 "skill": skill,
-                "questions_count": len(hits),
-                "avg_score": avg,
+                "questions_count": len(values),
+                "answered_count": sum(1 for v in values if v > 0),
+                "avg_score": round(sum(values) / len(values), 1) if values else 0.0,
+                "tested": bool(values),
             }
         )
     return coverage
+
+
+def _verdict(percentage: float, asked: int, answered: int) -> str:
+    if asked == 0 or answered / asked < MIN_ANSWERED_SHARE:
+        return INSUFFICIENT
+    overall = percentage / 10
+    if overall >= VERDICT_STRONG_MIN:
+        return "Strong"
+    if overall >= VERDICT_COMPETENT_MIN:
+        return "Competent"
+    return "Needs Work"
 
 
 def compute_summary(
@@ -64,32 +105,24 @@ def compute_summary(
     scores: list[dict],
     required_skills: list[str] | None = None,
 ) -> dict:
-    counted = [s["score"] for s in scores if s["score"] > 0]
-    skipped_count = sum(1 for s in scores if s["score"] == 0)
-    total = sum(counted)
-    max_possible = len(counted) * 10
-    avg = total / len(counted) if counted else 0
-    percentage = round(avg / 10 * 100, 1) if counted else 0.0
+    """Итоги интервью. Знаменатель — все заданные вопросы: пропуск и «не знаю» = 0."""
+    values = [int(s.get("score") or 0) for s in scores]
+    asked = len(values)
+    answered = [v for v in values if v > 0]
+    total = sum(values)
+    percentage = round(total / (asked * 10) * 100, 1) if asked else 0.0
+    avg_answered = sum(answered) / len(answered) if answered else 0.0
+    verdict = _verdict(percentage, asked, len(answered))
 
-    if not counted:
-        verdict = "Needs Work"
-    elif avg >= 8.0:
-        verdict = "Strong"
-    elif avg >= 6.5:
-        verdict = "Competent"
-    else:
-        verdict = "Needs Work"
+    def texts(predicate) -> list[str]:
+        return [
+            questions[i]["question"]
+            for i, v in enumerate(values)
+            if predicate(v) and i < len(questions)
+        ]
 
-    strengths = [
-        questions[i]["question"]
-        for i, s in enumerate(scores)
-        if s["score"] >= 8 and i < len(questions)
-    ]
-    improvements = [
-        questions[i]["question"]
-        for i, s in enumerate(scores)
-        if 0 < s["score"] <= 6 and i < len(questions)
-    ]
+    strengths = texts(lambda v: band(v) == EXCELLENT)
+    improvements = texts(lambda v: v > 0 and band(v) != EXCELLENT)
 
     elapsed_values = [
         s["elapsed_seconds"]
@@ -100,15 +133,22 @@ def compute_summary(
     avg_time = total_time / len(elapsed_values) if elapsed_values else 0.0
 
     return {
-        "avg_score": round(avg, 1),
+        "summary_version": SUMMARY_VERSION,
+        "asked_count": asked,
+        "answered_count": len(answered),
+        "answered_share": round(len(answered) / asked, 2) if asked else 0.0,
+        "avg_score_answered": round(avg_answered, 1),
+        # Прежние поля: app.py и сохранённые сессии читают их по этим именам.
+        "avg_score": round(avg_answered, 1),
         "total_score": total,
-        "max_possible": max_possible,
+        "max_possible": asked * 10,
         "percentage": percentage,
         "verdict": verdict,
+        "verdict_label": VERDICT_LABELS[verdict],
         "strengths": strengths,
         "improvements": improvements,
-        "skipped_count": skipped_count,
-        "counted_count": len(counted),
+        "skipped_count": asked - len(answered),
+        "counted_count": len(answered),
         "recommendation": RECOMMENDATION_TEMPLATES[verdict],
         "per_question": scores,
         "skills_coverage": compute_skills_coverage(required_skills or [], scores),

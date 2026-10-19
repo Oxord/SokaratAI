@@ -72,6 +72,19 @@
   }
 
   function pctClass(p) { return p >= 75 ? 'g' : p >= 50 ? '' : p >= 30 ? 'a' : 'r'; }
+  function questionsWord(n) {
+    const d = n % 10, dd = n % 100;
+    if (d === 1 && dd !== 11) return 'вопрос';
+    if (d >= 2 && d <= 4 && (dd < 12 || dd > 14)) return 'вопроса';
+    return 'вопросов';
+  }
+  // Сессии до summary_version 2 хранят индекс без precision/range — показываем как раньше.
+  function readinessTitle(rd) {
+    if (rd.range) return 'предварительно';
+    if (rd.precision === 'rough') return `≈${rd.index}/100 — оценка по ${rd.answered_count} ответам, грубая`;
+    if (rd.precision === 'normal') return `≈${rd.index}/100 — ${rd.label} (оценка)`;
+    return `${rd.index}/100 — ${rd.label}`;
+  }
   function fmtDate(iso) {
     const d = new Date(iso);
     if (isNaN(d)) return '';
@@ -731,7 +744,8 @@
     }
 
     const cls = pctClass(r.percentage);
-    const verdictText = { Strong: 'Сильный результат', Competent: 'Уверенная база', 'Needs Work': 'Есть над чем поработать' }[r.verdict] || r.verdict;
+    const verdictText = r.verdict_label
+      || { Strong: 'Сильный результат', Competent: 'Уверенная база', 'Needs Work': 'Есть над чем поработать' }[r.verdict] || r.verdict;
     const readiness = r.readiness;
 
     const hero = h('div', { class: 'hero-score' },
@@ -740,7 +754,8 @@
         h('h2', { style: 'margin-bottom:4px' }, verdictText),
         h('p', { class: 'muted', style: 'margin:0 0 8px' }, `${r.role} · ${r.level} · ${r.type_label}${r.company ? ' · ' + r.company : ''}`),
         h('div', {}, h('span', { class: 'tag' }, `${r.total_score}/${r.max_possible} баллов`),
-          r.skipped ? h('span', { class: 'tag warn' }, `пропущено: ${r.skipped}`) : null,
+          h('span', { class: r.answered_count < r.asked_count ? 'tag warn' : 'tag' }, `отвечено ${r.answered_count} из ${r.asked_count}`),
+          r.answered_count ? h('span', { class: 'tag' }, `средний по отвеченным: ${r.avg_score_answered}/10`) : null,
           r.total_time_seconds ? h('span', { class: 'tag' }, `⏱ ${fmtDuration(r.total_time_seconds)}`) : null,
           r.stress ? h('span', { class: 'tag bad' }, '🔥 стресс-режим') : null)));
 
@@ -748,11 +763,20 @@
 
     if (readiness) {
       blocks.push(h('div', { class: 'panel' },
-        h('h3', {}, `🎯 Индекс готовности к вакансии: ${readiness.index}/100 — ${readiness.label}`),
+        h('h3', {}, `🎯 Индекс готовности к вакансии: ${readinessTitle(readiness)}`),
+        readiness.range
+          ? h('p', { class: 'muted' }, `Ответь ещё на ${readiness.answers_needed} ${questionsWord(readiness.answers_needed)}, чтобы получить индекс. Сейчас он может быть от ${readiness.range[0]} до ${readiness.range[1]}.`)
+          : null,
         readiness.components.map((c) => h('div', { class: 'dim-row' },
           h('span', {}, c.name, h('span', { class: 'muted' }, `  вес ${c.weight_pct}%`)),
           h('div', { class: 'meter ' + pctClass(c.value) }, h('i', { style: `width:${c.value}%` })),
-          h('span', {}, `${Math.round(c.value)}%`)))));
+          h('span', {}, `${Math.round(c.value)}%`))),
+        readiness.untested_skills && readiness.untested_skills.length
+          ? h('p', { style: 'margin:8px 0 0' }, h('span', { class: 'muted' }, 'Не проверено: '), readiness.untested_skills.map((k) => h('span', { class: 'tag warn' }, k)))
+          : null,
+        readiness.resume_coverage_pct !== null && readiness.resume_coverage_pct !== undefined
+          ? h('p', { style: 'margin:8px 0 0' }, `📄 Резюме покрывает ${readiness.resume_coverage_pct}% требуемых навыков`)
+          : null));
     }
 
     const row2 = [];
@@ -766,7 +790,7 @@
         r.skills_coverage.map((e) => e.questions_count
           ? h('div', { class: 'dim-row' }, h('span', {}, e.skill),
             h('div', { class: 'meter ' + pctClass(e.avg_score * 10) }, h('i', { style: `width:${e.avg_score * 10}%` })), h('span', {}, e.avg_score))
-          : h('div', { class: 'dim-row' }, h('span', {}, e.skill), h('span', { class: 'muted' }, 'не раскрыт ⚠️'), h('span', {}, '—')))));
+          : h('div', { class: 'dim-row' }, h('span', {}, e.skill), h('span', { class: 'muted' }, 'не проверено ⚠️'), h('span', {}, '—')))));
     }
     if (row2.length) blocks.push(h('div', { class: row2.length > 1 ? 'grid-2' : '' }, row2));
 
@@ -915,7 +939,7 @@
         h('tbody', {}, c.sessions.map((x) => h('tr', { class: 'click', tabindex: 0, onclick: () => { location.hash = `#/saved/${x.session_id}`; },
           onkeydown: (e) => { if (e.key === 'Enter') location.hash = `#/saved/${x.session_id}`; } },
         h('td', {}, fmtDate(x.ts)), h('td', {}, `${x.role}${x.level ? ' · ' + x.level : ''}`), h('td', {}, x.company || '—'),
-        h('td', {}, h('b', {}, `${Math.round(x.percentage)}%`)), h('td', {}, x.readiness === null || x.readiness === undefined ? '—' : `${x.readiness}/100`)))))
+        h('td', {}, h('b', {}, `${Math.round(x.percentage)}%`), x.summary_version < 2 ? h('span', { class: 'muted' }, ' · старая формула') : null), h('td', {}, x.readiness === null || x.readiness === undefined ? '—' : `${x.readiness}/100`)))))
       : h('p', { class: 'muted' }, 'Пока нет завершённых интервью. Самое время начать!');
 
     page(h('div', { class: 'container report stack' },

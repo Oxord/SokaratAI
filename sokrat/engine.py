@@ -56,6 +56,7 @@ from .readiness import compute_readiness
 from .resource_generator import generate_resources
 from .resume_parser import ResumeProfile, extract_resume_text, parse_resume
 from .role_classifier import classify_role
+from .score_bands import GOOD_MIN, READINESS_MIN_ANSWERS
 from .scoring import compute_score
 from .star_analysis import aggregate_star, analyze_star, is_behavioral
 from .study_plan import build_study_plan, collect_focus_areas
@@ -553,7 +554,9 @@ class Engine:
                 log.exception("dynamics build failed (best-effort, ignored)")
                 summary["dynamics"] = None
             if iv.vacancy or iv.gaps:
-                summary["readiness"] = compute_readiness(summary, iv.gaps)
+                summary["readiness"] = compute_readiness(
+                    summary, iv.gaps, min(READINESS_MIN_ANSWERS, len(iv.questions))
+                )
             iv.summary = summary
             iv.focus_areas = collect_focus_areas(
                 summary, iv.gaps.to_dict() if iv.gaps else None, weak_topics
@@ -779,13 +782,15 @@ def build_report_view(data: dict[str, Any]) -> dict[str, Any]:
                 "feedback": sc.get("feedback", ""),
                 "strengths": sc.get("strengths", []),
                 "weaknesses": sc.get("weaknesses", []),
-                "ideal_answer": sc.get("ideal_answer") if sc.get("score", 0) < 6 else None,
+                "ideal_answer": sc.get("ideal_answer") if sc.get("score", 0) < GOOD_MIN else None,
                 "star": sc.get("star"),
                 "elapsed_seconds": sc.get("elapsed_seconds"),
                 "category": sc.get("category"),
             }
         )
     dims = summary.get("dimensions") or {}
+    # Сессии до summary_version=2 этих полей не имеют — берём прежние аналоги.
+    answered = summary.get("answered_count", summary.get("counted_count", 0))
     return {
         "session_id": data.get("session_id", ""),
         "role": data.get("role", ""),
@@ -803,6 +808,11 @@ def build_report_view(data: dict[str, Any]) -> dict[str, Any]:
         "max_possible": summary.get("max_possible", 0),
         "counted": summary.get("counted_count", 0),
         "skipped": summary.get("skipped_count", 0),
+        "summary_version": summary.get("summary_version", 1),
+        "asked_count": summary.get("asked_count", len(scores)),
+        "answered_count": answered,
+        "avg_score_answered": summary.get("avg_score_answered", summary.get("avg_score", 0)),
+        "verdict_label": summary.get("verdict_label", ""),
         "recommendation": summary.get("recommendation", ""),
         "dimensions": [
             {"key": k, "label": DIMENSION_LABELS[k], "value": dims.get(k, 0.0)}
@@ -824,20 +834,56 @@ def build_report_view(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _questions_word(n: int) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return "вопрос"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return "вопроса"
+    return "вопросов"
+
+
+def _readiness_markdown(readiness: dict[str, Any]) -> list[str]:
+    if readiness.get("range"):
+        low, high = readiness["range"]
+        need = int(readiness.get("answers_needed") or 0)
+        head = (
+            "### Индекс готовности к вакансии (предварительно)\n"
+            f"Ответь ещё на {need} {_questions_word(need)}, чтобы получить индекс. "
+            f"Сейчас он может быть от {low} до {high}."
+        )
+    elif readiness.get("precision") == "rough":
+        head = (
+            f"### Индекс готовности к вакансии: ≈{readiness['index']}/100 "
+            f"(оценка по {readiness.get('answered_count', 0)} ответам, грубая)"
+        )
+    elif readiness.get("precision") == "normal":
+        head = f"### Индекс готовности к вакансии: ≈{readiness['index']}/100 (оценка) — {readiness['label']}"
+    else:
+        head = f"### Индекс готовности к вакансии: {readiness['index']}/100 — {readiness['label']}"
+    lines = ["", head]
+    for c in readiness.get("components", []):
+        lines.append(f"- {c['name']}: {c['value']:g}% (вес {c['weight_pct']}%)")
+    if readiness.get("untested_skills"):
+        lines.append(f"- Не проверено: {', '.join(readiness['untested_skills'])}")
+    if readiness.get("resume_coverage_pct") is not None:
+        lines.append(f"- Резюме покрывает {readiness['resume_coverage_pct']:g}% требуемых навыков")
+    return lines
+
+
 def report_markdown(view: dict[str, Any]) -> str:
+    title = view.get("verdict_label") or view["verdict"]
     lines = [
         "# Сократ — отчёт по интервью",
         "",
         f"**Роль:** {view['role']} · **Уровень:** {view['level']} · **Тип:** {view['type_label']}",
         "",
-        f"## {view['verdict']} — {view['percentage']}%",
-        f"_{view['total_score']}/{view['max_possible']} баллов_",
+        f"## {title} — {view['percentage']}%",
+        f"_{view['total_score']}/{view['max_possible']} баллов · Отвечено {view['answered_count']} "
+        f"из {view['asked_count']} · средний балл по отвеченным {view['avg_score_answered']}/10_",
     ]
     readiness = view.get("readiness")
     if readiness:
-        lines += ["", f"### Индекс готовности к вакансии: {readiness['index']}/100 — {readiness['label']}"]
-        for c in readiness.get("components", []):
-            lines.append(f"- {c['name']}: {c['value']:g}% (вес {c['weight_pct']}%)")
+        lines += _readiness_markdown(readiness)
     if view["has_dimensions"]:
         lines += ["", "### Профиль интервью (0–10)"]
         lines += [f"- {d['label']}: {d['value']}" for d in view["dimensions"]]
@@ -847,7 +893,7 @@ def report_markdown(view: dict[str, Any]) -> str:
             if e.get("questions_count"):
                 lines.append(f"- {e['skill']}: {e['avg_score']}/10 (вопросов: {e['questions_count']})")
             else:
-                lines.append(f"- {e['skill']}: не раскрыт")
+                lines.append(f"- {e['skill']}: не проверено")
     gap = view.get("gap_analysis")
     if gap:
         lines += ["", "### Резюме ↔ вакансия", f"Совпадение: {gap.get('coverage_pct', 0)}%"]

@@ -36,6 +36,7 @@ from sokrat.interview_rules import (
 from sokrat.llm import llm_configured
 from sokrat.personas import PERSONAS
 from sokrat.practice import KINDS as PRACTICE_KINDS
+from sokrat.score_bands import SUMMARY_VERSION
 from sokrat.stt import SaluteSpeechError, get_stt_client, tts_enabled
 from sokrat.users import register, validate_credentials, verify
 from web.auth import COOKIE_NAME, SESSION_DAYS, LoginThrottle, make_token, read_token
@@ -393,12 +394,16 @@ def cabinet(user: str = Depends(require_user)) -> dict[str, Any]:
     records = [r for r in load_sessions() if r["user_id"] == user]
     records.sort(key=lambda r: r["ts"])
 
+    # Прогресс и статистика — только по сессиям текущей формулы итогов:
+    # проценты старой формулы (без учёта пропусков) с новыми несравнимы.
+    comparable = [r for r in records if r["summary_version"] == SUMMARY_VERSION]
     by_role: dict[str, list[dict[str, Any]]] = {}
-    companies: dict[str, dict[str, Any]] = {}
-    for r in records:
+    for r in comparable:
         by_role.setdefault(r["role"] or "—", []).append(
             {"ts": r["ts"], "percentage": r["percentage"], "session_id": r["session_id"]}
         )
+    companies: dict[str, dict[str, Any]] = {}
+    for r in comparable:
         if r["company"] and r["readiness"] is not None:
             companies[r["company"].lower()] = {
                 "company": r["company"],
@@ -407,9 +412,10 @@ def cabinet(user: str = Depends(require_user)) -> dict[str, Any]:
                 "ts": r["ts"],
             }
 
-    pcts = [r["percentage"] for r in records]
+    pcts = [r["percentage"] for r in comparable]
+    roles = list(dict.fromkeys(r["role"] or "—" for r in records))
     weak: list[dict[str, str]] = []
-    for role in list(by_role)[:5]:
+    for role in roles[:5]:
         for topic in recent_weak_topics(role, user, limit=3):
             weak.append({"role": role, "topic": topic})
 
@@ -430,6 +436,7 @@ def cabinet(user: str = Depends(require_user)) -> dict[str, Any]:
                 "company": r["company"],
                 "percentage": r["percentage"],
                 "readiness": r["readiness"],
+                "summary_version": r["summary_version"],
             }
             for r in reversed(records)
         ][:50],

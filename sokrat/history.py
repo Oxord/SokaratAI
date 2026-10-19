@@ -13,6 +13,7 @@ from typing import Any
 
 from .analyzer import DIMENSION_LABELS
 from .config import SESSIONS_DIR
+from .score_bands import SUMMARY_VERSION, is_weak
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ def _normalize(data: dict[str, Any]) -> dict[str, Any] | None:
         "percentage": float(summary.get("percentage") or 0.0),
         "dimensions": summary.get("dimensions") or {},
         "readiness": readiness.get("index"),
+        "summary_version": int(summary.get("summary_version") or 1),
     }
 
 
@@ -75,14 +77,17 @@ def build_dynamics(
 ) -> dict[str, Any] | None:
     """Сравнивает текущий результат с прошлыми сессиями по той же роли.
 
-    `current` — summary текущей сессии. Возвращает None, если прошлых сессий нет.
+    `current` — summary текущей сессии. Сравниваются только сессии с той же
+    версией формулы итогов. Возвращает None, если прошлых сессий нет.
     """
+    version = int(current.get("summary_version") or 1)
     previous = [
         r
         for r in load_sessions(sessions_dir)
         if r["role"].strip().lower() == role.strip().lower()
         and r["session_id"] != session_id
         and r["user_id"] == user_id
+        and r["summary_version"] == version
     ][-_RECENT_LIMIT:]
     if not previous:
         return None
@@ -136,9 +141,6 @@ def format_dynamics(dyn: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n\n"
 
 
-_WEAK_SCORE_MAX = 6
-
-
 def recent_weak_topics(
     role: str,
     user_id: str = "",
@@ -179,7 +181,7 @@ def recent_weak_topics(
                 if isinstance(q, dict) and isinstance(sc, dict):
                     pairs.append((str(q.get("question") or ""), int(sc.get("score") or 0)))
         for text, score in pairs:
-            if text and 0 < score <= _WEAK_SCORE_MAX:
+            if text and is_weak(score):
                 found.append((ts, text.strip()))
     found.sort(key=lambda item: item[0], reverse=True)
     topics: list[str] = []
@@ -197,10 +199,15 @@ def other_vacancies(
     session_id: str,
     sessions_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Последний индекс готовности по другим компаниям пользователя (для сравнения)."""
+    """Последний индекс готовности по другим компаниям пользователя (для сравнения).
+
+    Только сессии текущей формулы итогов: индексы старой формулы включали резюме.
+    """
     latest: dict[str, dict[str, Any]] = {}
     for r in load_sessions(sessions_dir):
         if r["user_id"] != user_id or r["session_id"] == session_id:
+            continue
+        if r["summary_version"] != SUMMARY_VERSION:
             continue
         company = r["company"].strip()
         if not company or company.lower() == (current_company or "").strip().lower():
