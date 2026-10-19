@@ -4,14 +4,25 @@ and one prompt path."""
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from typing import Any, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from .key_points import (
+    BONUS_PREFIX,
+    apply_bonus_points,
+    apply_fixed_points,
+    format_fixed_points,
+    validate_bonus_points,
+    validate_key_points,
+)
 from .llm import get_chat_model_for
 from .prompts import load_prompt
+
+log = logging.getLogger(__name__)
 
 ALLOWED_INTENTS: tuple[str, ...] = (
     "answer", "clarification", "dont_know", "skip", "meta",
@@ -50,8 +61,14 @@ class AnswerEvaluation(BaseModel):
     # Флаги для расчёта балла в коде (sokrat.scoring), п.2.4 analyzer.txt.
     off_topic: Optional[bool] = None
     bonus: Optional[bool] = None
+    # Разметка не сопоставилась с фиксированными пунктами и после повтора:
+    # балл по коду не считаем, берём балл модели (Engine._answer_score).
+    points_mismatch: bool = False
+    # Разметка бонусных пунктов (в D не входят, covered даёт +1; sokrat.scoring.has_bonus).
+    # Пусто — бонус берётся из флага bonus модели.
+    bonus_marks: list[Any] = Field(default_factory=list)
 
-    @field_validator("expected_points", "points", "errors", mode="before")
+    @field_validator("expected_points", "points", "errors", "bonus_marks", mode="before")
     @classmethod
     def _null_to_empty(cls, value: Any) -> Any:
         # Модель иногда пишет null вместо []; из-за служебного поля не валим всю оценку.
@@ -138,13 +155,24 @@ def analyze_answer_llm(
     role_category: str = "tech",
     persona_style: str = "",
     key_points: list[str] | None = None,
+    fixed_points: list[str] | None = None,
+    bonus_points: list[str] | None = None,
 ) -> AnswerEvaluation:
+    """key_points — нестрогие подсказки темы; fixed_points — эталонные пункты,
+    которые судья размечает ровно в заданном виде (analyzer.txt п.2.1);
+    bonus_points — необязательные пункты B1..Bk, только вместе с fixed_points."""
     template = load_prompt(_PROMPT_NAME)
     hints_text = ", ".join(hints) if hints else "(подсказок нет)"
     skills = [s for s in (required_skills or []) if s]
     skills_text = ", ".join(skills) if skills else "(не указаны)"
     points = [str(p).strip() for p in (key_points or []) if str(p).strip()]
     key_points_text = "; ".join(points) if points else "(не заданы)"
+    fixed = validate_key_points(fixed_points) if fixed_points else None
+    if fixed_points and fixed is None:
+        log.warning("analyzer: fixed_points не прошли валидацию (%d шт.), оцениваю без них", len(fixed_points))
+    bonus = (validate_bonus_points(bonus_points, fixed) or None) if fixed and bonus_points else None
+    if fixed and bonus_points and bonus is None:
+        log.warning("analyzer: bonus_points не прошли валидацию (%d шт.), оцениваю без них", len(bonus_points))
     safe_answer = strip_answer_tags(answer)
 
     prompt = template.format(
@@ -154,6 +182,8 @@ def analyze_answer_llm(
         question=question,
         hints=hints_text,
         key_points=key_points_text,
+        fixed_points=format_fixed_points(fixed),
+        bonus_points=format_fixed_points(bonus, prefix=BONUS_PREFIX),
         answer=safe_answer,
         clarifications_used=clarifications_used,
         required_skills=skills_text,
@@ -164,17 +194,72 @@ def analyze_answer_llm(
     model = get_chat_model_for(role_category, temperature=ANALYZER_TEMPERATURE)
     structured = model.with_structured_output(AnswerEvaluation, method="json_mode")
 
+    first: tuple[AnswerEvaluation, str | None] | None = None
     try:
-        return coerce_evaluation(structured.invoke([HumanMessage(content=prompt)]))
+        first = _resolve(coerce_evaluation(structured.invoke([HumanMessage(content=prompt)])), fixed, bonus)
+        if first[1] is None:
+            return first[0]
     except (ValidationError, ValueError):
-        retry_messages = [
-            SystemMessage(
-                content=(
-                    "ВЕРНИ СТРОГО валидный JSON-объект, "
-                    "полностью соответствующий схеме, "
-                    "без markdown, без префиксов, без пояснений."
-                )
-            ),
-            HumanMessage(content=prompt),
-        ]
-        return coerce_evaluation(structured.invoke(retry_messages))
+        pass
+
+    retry_messages = [
+        SystemMessage(
+            content=(
+                "ВЕРНИ СТРОГО валидный JSON-объект, "
+                "полностью соответствующий схеме, "
+                "без markdown, без префиксов, без пояснений."
+            )
+        ),
+        HumanMessage(content=prompt),
+    ]
+    try:
+        second = _resolve(coerce_evaluation(structured.invoke(retry_messages)), fixed, bonus)
+    except (ValidationError, ValueError):
+        if first is not None and first[1] == _BONUS_PROBLEM:
+            return _bonus_fallback(first[0], len(bonus or []))
+        raise
+    if second[1] is None:
+        return second[0]
+    for candidate in (second, first):
+        if candidate is not None and candidate[1] == _BONUS_PROBLEM:
+            return _bonus_fallback(candidate[0], len(bonus or []))
+    result = second[0]
+    log.warning(
+        "analyzer: разметка не сопоставилась с %d фиксированными пунктами после повтора "
+        "(i=%s), беру балл модели",
+        len(fixed or []),
+        [p.get("i") if isinstance(p, dict) else type(p).__name__ for p in result.points],
+    )
+    return result.model_copy(update={"points_mismatch": True})
+
+
+_POINTS_PROBLEM = "points"
+_BONUS_PROBLEM = "bonus"
+
+
+def _bonus_fallback(result: AnswerEvaluation, n_bonus: int) -> AnswerEvaluation:
+    # Обязательные пункты сопоставились — D считаем; бонус берём из флага модели.
+    log.warning("analyzer: разметка %d бонусных пунктов не сопоставилась, бонус — по флагу модели", n_bonus)
+    return result
+
+
+def _resolve(
+    result: AnswerEvaluation, fixed: list[str] | None, bonus: list[str] | None
+) -> tuple[AnswerEvaluation, str | None]:
+    """Подставляет фиксированные и бонусные пункты в разбор.
+
+    Вторым элементом — что не сопоставилось: None, "points" (обязательные) или "bonus".
+    При "bonus" обязательные уже подставлены, а bonus_marks очищены.
+    """
+    if not fixed or result.intent != "answer":
+        return result.model_copy(update={"bonus_marks": []}), None
+    matched = apply_fixed_points(result.points, fixed)
+    if matched is None:
+        return result, _POINTS_PROBLEM
+    update: dict[str, Any] = {"expected_points": list(fixed), "points": matched, "bonus_marks": []}
+    if not bonus:
+        return result.model_copy(update=update), None
+    marks = apply_bonus_points(result.bonus_marks, bonus)
+    if marks is None:
+        return result.model_copy(update=update), _BONUS_PROBLEM
+    return result.model_copy(update={**update, "bonus_marks": marks}), None

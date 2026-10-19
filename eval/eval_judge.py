@@ -44,6 +44,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from sokrat.analyzer import strip_answer_tags
+from sokrat.key_points import (
+    BONUS_PREFIX,
+    apply_bonus_points,
+    apply_fixed_points,
+    format_fixed_points,
+    validate_bonus_points,
+    validate_key_points,
+)
 from sokrat.scoring import compute_score
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -184,7 +192,33 @@ def parse_eval(raw):
         "errors": _as_list(d.get("errors")),
         "bonus": _as_bool(d.get("bonus")),
         "off_topic": _as_bool(d.get("off_topic")),
+        "bonus_marks": _as_list(d.get("bonus_marks")),
+        "points_mismatch": False,
+        "bonus_mismatch": False,
     }
+
+
+POINTS_PROBLEM, BONUS_PROBLEM = "points", "bonus"
+
+
+def resolve_fixed(parsed, fixed, bonus=None):
+    """Компактная разметка {i, status} → полный разбор, как sokrat.analyzer._resolve.
+
+    (разбор, проблема): проблема None, "points" (обязательные не сопоставились) или "bonus"
+    (обязательные подставлены, bonus_marks очищены — бонус по флагу модели).
+    """
+    if not fixed or parsed.get("intent") != "answer":
+        return {**parsed, "bonus_marks": []}, None
+    matched = apply_fixed_points(parsed.get("points"), fixed)
+    if matched is None:
+        return parsed, POINTS_PROBLEM
+    out = {**parsed, "expected_points": list(fixed), "points": matched, "bonus_marks": []}
+    if not bonus:
+        return out, None
+    marks = apply_bonus_points(parsed.get("bonus_marks"), bonus)
+    if marks is None:
+        return out, BONUS_PROBLEM
+    return {**out, "bonus_marks": marks}, None
 
 
 def final_score(parsed):
@@ -192,11 +226,14 @@ def final_score(parsed):
     score = parsed.get("score")
     if parsed.get("intent") != "answer":
         return score, "model"
+    if parsed.get("points_mismatch"):
+        return score or 1, "model"  # Engine._answer_score: статусы не привязаны к пунктам
     if not parsed.get("has_breakdown"):
         return (score if score is not None else 1), "model"  # старый engine: None → 1
     points, errors = parsed.get("points"), parsed.get("errors")
     if isinstance(points, list) and isinstance(errors, list):
-        computed = compute_score(points, errors, bonus=parsed.get("bonus"), off_topic=parsed.get("off_topic"))
+        computed = compute_score(points, errors, bonus=parsed.get("bonus"), off_topic=parsed.get("off_topic"),
+                                 bonus_marks=parsed.get("bonus_marks"))
         if computed is not None:
             return computed, "code"
     return score or 1, "model"  # Engine._answer_score: 0 и None → 1
@@ -204,10 +241,30 @@ def final_score(parsed):
 
 # ---------------------------------------------------------------- run
 
+def uses_fixed_points(template):
+    return "{fixed_points}" in template
+
+
+def fixed_points_for(template, item):
+    """Фиксированные пункты item'а — только для промпта со слотом {fixed_points}."""
+    return validate_key_points(item.get("key_points")) if uses_fixed_points(template) else None
+
+
+def bonus_points_for(template, item):
+    """Бонусные пункты — только вместе с фиксированными; без них []."""
+    fixed = fixed_points_for(template, item)
+    if not fixed:
+        return []
+    return validate_bonus_points(item.get("bonus_points"), fixed) or []
+
+
 def build_prompt(template, item, persona, strip_tag):
     skills = item.get("required_skills") or []
     hints = item.get("hints") or []
-    kp = item.get("key_points") or []
+    fixed = fixed_points_for(template, item)
+    # Старые промпты получают key_points в нестрогий слот, как раньше; новый — в {fixed_points},
+    # а нестрогий слот, как в engine, берёт ideal_keywords.
+    kp = (item.get("ideal_keywords") or []) if fixed else (item.get("key_points") or [])
     answer = strip_answer_tags(item["answer"]) if strip_tag else item["answer"]
     # лишние именованные аргументы str.format игнорирует — шаблон старого и нового промпта подходит
     return template.format(
@@ -222,6 +279,8 @@ def build_prompt(template, item, persona, strip_tag):
         answer=answer,
         clarifications_used=item.get("clarifications_used", 0),
         key_points="; ".join(kp) if kp else "(не заданы)",
+        fixed_points=format_fixed_points(fixed),
+        bonus_points=format_fixed_points(bonus_points_for(template, item), prefix=BONUS_PREFIX),
     )
 
 
@@ -239,9 +298,14 @@ def _add_usage(totals, usage):
             totals[key] = totals.get(key, 0) + value
 
 
-def call_judge(client, model, temperature, prompt):
-    """Вызов судьи с одним повтором при невалидном ответе, как в проде. Токены суммируются по попыткам."""
-    rec, usage, parsed, raw, err = {}, {}, None, None, None
+def call_judge(client, model, temperature, prompt, fixed=None, bonus=None):
+    """Вызов судьи с одним повтором при невалидном ответе, как в проде. Токены суммируются по попыткам.
+
+    fixed / bonus — фиксированные и бонусные пункты: несопоставленная разметка тоже повод для повтора.
+    Если и повтор не сошёлся: по бонусным — bonus_mismatch=True и бонус по флагу модели;
+    по обязательным — points_mismatch=True и балл модели.
+    """
+    rec, usage, parsed, raw, err, mismatched, bonus_only = {}, {}, None, None, None, None, None
     for _ in range(2):
         try:
             resp = client.chat.completions.create(
@@ -252,12 +316,24 @@ def call_judge(client, model, temperature, prompt):
             _add_usage(usage, resp.usage)
             raw = resp.choices[0].message.content or ""
             rec["model_served"] = resp.model
-            parsed = parse_eval(raw)
-            if parsed is not None:
+            candidate = parse_eval(raw)
+            if candidate is None:
+                err = "invalid_json_or_schema"
+                continue
+            resolved, problem = resolve_fixed(candidate, fixed, bonus)
+            if problem is None:
+                parsed = resolved
                 break
-            err = "invalid_json_or_schema"
+            if problem == BONUS_PROBLEM:
+                bonus_only, err = resolved, "bonus_mismatch"
+            else:
+                mismatched, err = candidate, "points_mismatch"
         except Exception as e:  # noqa: BLE001 — eval должен доехать до конца, ошибка пишется в запись
             err = f"{type(e).__name__}: {e}"
+    if parsed is None and bonus_only is not None:
+        parsed = {**bonus_only, "bonus_mismatch": True}
+    elif parsed is None and mismatched is not None:
+        parsed = {**mismatched, "points_mismatch": True}
     rec.update(usage, ok=parsed is not None, error=None if parsed else err, raw=raw)
     if parsed:
         rec.update(parsed)
@@ -297,7 +373,8 @@ def cmd_run(args):
         rec = {"tag": args.tag, "id": it["id"], "rep": rep, "model": model,
                "prompt_hash": prompt_hash, "temperature": args.temperature}
         rec.update(call_judge(client, model, args.temperature,
-                              build_prompt(template, it, args.persona, args.strip_tag)))
+                              build_prompt(template, it, args.persona, args.strip_tag),
+                              fixed=fixed_points_for(template, it), bonus=bonus_points_for(template, it)))
         rec["latency_s"] = round(time.time() - t0, 2)
         with lock, out.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -358,13 +435,17 @@ def _coverage(points):
 
 
 def parse_stability(by_id):
-    """Разброс разбора нового промпта между повторами: число expected_points, статусы, покрытие D."""
+    """Разброс разбора нового промпта между повторами: число размеченных пунктов, статусы, покрытие D.
+
+    Число считаем по points, а не expected_points: при фиксированных пунктах expected_points
+    подставляет код, и метрика по ним была бы 0% автоматически.
+    """
     count_ranges, statuses_same, d_ranges = [], 0, []
     for recs in by_id.values():
         reps = [r for r in _answers(recs) if r.get("has_breakdown") and isinstance(r.get("points"), list)]
         if len(reps) < 2:
             continue
-        counts = [len(r["expected_points"]) if isinstance(r.get("expected_points"), list) else 0 for r in reps]
+        counts = [len(r["points"]) for r in reps]
         count_ranges.append(max(counts) - min(counts))
         statuses_same += len({_status_counts(r["points"]) for r in reps}) == 1
         ds = [_coverage(r["points"]) for r in reps]
@@ -382,12 +463,17 @@ def model_vs_final(recs):
     pairs = [(r["score_model"], r["score_final"]) for r in answers
              if isinstance(r.get("score_model"), int) and isinstance(r.get("score_final"), int)]
     fallbacks = sum(1 for r in answers if r.get("score_source") == "model")
+    mismatch = {"mismatch": sum(1 for r in answers if r.get("points_mismatch")), "answers": len(answers)}
     if not pairs:
-        return {"n": 0, "fallbacks": fallbacks}
+        return {"n": 0, "fallbacks": fallbacks, **mismatch}
     deltas = [f - m for m, f in pairs]
     return {"n": len(pairs), "differs": sum(d != 0 for d in deltas) / len(pairs),
             "mean_delta": statistics.fmean(deltas), "mean_abs": statistics.fmean(abs(d) for d in deltas),
-            "fallbacks": fallbacks}
+            "fallbacks": fallbacks, **mismatch}
+
+
+def mismatch_rate(mv):
+    return mv["mismatch"] / mv["answers"] if mv.get("answers") else None
 
 
 def _mean_of(recs, key):
@@ -489,7 +575,7 @@ def _section_stability(by_id, recs):
         L.append("Нет повторов (запусти с --repeats ≥2).")
     L += ["", "### Стабильность разбора (новый промпт)"]
     if p["n"]:
-        L.append(f"Ответов: {p['n']} | число expected_points различается: {pct(p['count_differs'])} "
+        L.append(f"Ответов: {p['n']} | число размеченных пунктов различается: {pct(p['count_differs'])} "
                  f"(средний размах {fmt(p['mean_count_range'])}) | одинаковый набор статусов во всех повторах: "
                  f"{pct(p['same_statuses'])} | средний размах покрытия D: {fmt(p['mean_d_range'])}")
     else:
@@ -500,7 +586,9 @@ def _section_stability(by_id, recs):
                  f"{mv['mean_delta']:+.2f} | средний |Δ|: {fmt(mv['mean_abs'])} | фолбэк на балл модели: {mv['fallbacks']}")
     else:
         L.append("Не применимо: нет разбора points (старый промпт), балл и так от модели.")
-    return L + [""], s, p
+    L.append(f"Фолбэк на балл модели из-за несопоставленных пунктов: {mv['mismatch']}/{mv['answers']} "
+             f"({pct(mismatch_rate(mv))})")
+    return L + [""], s, p, mv
 
 
 def _section_pairs(by_id, data, med):
@@ -563,25 +651,26 @@ def _section_bootstrap(med):
 def report_tag(tag, by_id, data, mark):
     recs = [r for rs in by_id.values() for r in rs]
     med = item_medians(by_id)
-    stability, s, p = _section_stability(by_id, recs)
+    stability, s, p, mv = _section_stability(by_id, recs)
     lines = ([f"## Тег `{tag}`", ""] + _section_header(recs) + _section_humans(by_id, data, med, mark)
              + stability + _section_pairs(by_id, data, med) + _section_intent(by_id, data) + _section_bootstrap(med))
     summary = {"tag": tag, "models": sorted({r.get("model_served") or r.get("model") for r in recs}),
-               "t": sorted({r.get("temperature") for r in recs}), "score": s, "parse": p, "usage": usage_summary(recs)}
+               "t": sorted({r.get("temperature") for r in recs}), "score": s, "parse": p,
+               "mismatch": mismatch_rate(mv), "usage": usage_summary(recs)}
     return lines, med, summary
 
 
 def _summary_table(summaries):
     L = ["## Сводка по тегам", "",
-         "| тег | модель | t | **повторы в разных полосах** | средний SD | число пунктов различается "
-         "| одинаковые статусы | вход, ток. | выход, ток. | latency, с |",
-         "|---|---|---|---|---|---|---|---|---|---|"]
+         "| тег | модель | t | **повторы в разных полосах** | **одинаковые статусы** | средний SD "
+         "| число пунктов различается | фолбэк: пункты не сопоставились | вход, ток. | выход, ток. | latency, с |",
+         "|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in summaries:
         sc, pa, u = s["score"], s["parse"], s["usage"]
         L.append(f"| {s['tag']} | {', '.join(map(str, s['models']))} | {', '.join(map(str, s['t']))} "
-                 f"| **{pct(sc.get('band_flip'))}** | {fmt(sc.get('mean_sd'))} | {pct(pa.get('count_differs'))} "
-                 f"| {pct(pa.get('same_statuses'))} | {fmt(u['prompt_tokens'], 0)} | {fmt(u['completion_tokens'], 0)} "
-                 f"| {fmt(u['latency_s'], 1)} |")
+                 f"| **{pct(sc.get('band_flip'))}** | **{pct(pa.get('same_statuses'))}** | {fmt(sc.get('mean_sd'))} "
+                 f"| {pct(pa.get('count_differs'))} | {pct(s.get('mismatch'))} "
+                 f"| {fmt(u['prompt_tokens'], 0)} | {fmt(u['completion_tokens'], 0)} | {fmt(u['latency_s'], 1)} |")
     return L + [""]
 
 

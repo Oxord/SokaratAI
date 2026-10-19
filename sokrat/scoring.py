@@ -61,15 +61,26 @@ def _coverage_score(statuses: list[str]) -> int:
     return _FULL_COVERAGE_SCORE
 
 
+def has_bonus(bonus_marks: list[Any] | None, bonus_flag: bool | None) -> bool:
+    """+1 даёт хотя бы один covered бонусный пункт; флаг bonus модели — только если
+    бонусной разметки нет (у вопроса нет bonus_points или разметка не сопоставилась)."""
+    statuses = _statuses(bonus_marks or [])
+    if statuses:
+        return "covered" in statuses
+    return bool(bonus_flag)
+
+
 def compute_score(
     points: list[Any],
     errors: list[Any],
     *,
     bonus: bool | None,
     off_topic: bool | None,
+    bonus_marks: list[Any] | None = None,
 ) -> int | None:
     """Балл 1–10 для intent=answer или None, если разбор пустой или битый.
 
+    D считается только по обязательным points; бонусные пункты (bonus_marks) в D не входят.
     None означает «посчитать нельзя» — вызывающий сам решает, чем заменить.
     """
     if off_topic:
@@ -83,6 +94,6 @@ def compute_score(
     if any(core_flags):
         return CORE_ERROR_WITH_COVERED_SCORE if "covered" in statuses else CORE_ERROR_SCORE
 
-    score = _coverage_score(statuses) + (1 if bonus else 0)
+    score = _coverage_score(statuses) + (1 if has_bonus(bonus_marks, bonus) else 0)
     score -= len(core_flags)  # здесь остались только некритичные ошибки
     return max(MIN_SCORED_ANSWER, min(MAX_SCORE, score))

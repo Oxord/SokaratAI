@@ -70,6 +70,16 @@ _MAX_ANSWER_CHARS = 6000
 _REPORT_QUESTION_CHARS = 400
 
 
+def judge_points(question: dict) -> dict[str, list[str] | None]:
+    """Что передать судье: фиксированные key_points вопроса, если есть, плюс ideal_keywords
+    как нестрогие подсказки темы. Без key_points судья составляет пункты сам, как раньше."""
+    return {
+        "fixed_points": list(question.get("key_points") or []) or None,
+        "bonus_points": list(question.get("bonus_points") or []) or None,
+        "key_points": list(question.get("ideal_keywords") or []),
+    }
+
+
 class EngineError(RuntimeError):
     """Ошибка, понятная пользователю (показывается в интерфейсе как есть)."""
 
@@ -327,7 +337,7 @@ class Engine:
                 interview_type=iv.interview_type,
                 question=question.get("question", ""),
                 hints=question.get("hints", []) or [],
-                key_points=question.get("ideal_keywords") or [],
+                **judge_points(question),
                 answer=answer_text,
                 clarifications_used=clarifications,
                 required_skills=iv.required_skills,
@@ -370,8 +380,13 @@ class Engine:
     def _answer_score(analysis: Any) -> int:
         # 0 для answer промпт запрещает: summary посчитал бы такой ответ пропущенным.
         model_score = analysis.score or 1
+        if getattr(analysis, "points_mismatch", False):
+            # Статусы не привязаны к фиксированным пунктам — D по ним считать нельзя.
+            log.warning("analyzer: points_mismatch, беру балл модели %s", model_score)
+            return model_score
         computed = compute_score(
-            analysis.points, analysis.errors, bonus=analysis.bonus, off_topic=analysis.off_topic
+            analysis.points, analysis.errors, bonus=analysis.bonus, off_topic=analysis.off_topic,
+            bonus_marks=getattr(analysis, "bonus_marks", None),
         )
         if computed is None:
             # Только структура, без цитат из ответа пользователя.
@@ -433,6 +448,10 @@ class Engine:
             "expected_points": list(analysis.expected_points) if analysis else [],
             "points": list(analysis.points) if analysis else [],
             "errors": list(analysis.errors) if analysis else [],
+            # Происхождение эталонных пунктов: "llm" — черновик, не проверенный человеком.
+            "key_points_source": question.get("key_points_source") if question.get("key_points") else None,
+            "points_mismatch": bool(getattr(analysis, "points_mismatch", False)) if analysis else False,
+            "bonus_marks": list(getattr(analysis, "bonus_marks", None) or []) if analysis else [],
             "model": model_name_for(iv.role_category) if analysis else None,
             "prompt_hash": prompt_hash() if analysis else None,
         }
