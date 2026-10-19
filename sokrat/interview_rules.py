@@ -71,6 +71,15 @@ def compute_bounds(level: str | None, num_skills: int, mode: str | None = None) 
         min_q = max_q
     return min_q, max_q
 
+def earliest_stop(min_q: int, max_q: int) -> int:
+    """С какого вопроса интервью может закончиться само (ожидаемая длина).
+
+    Не раньше min_q и не раньше READINESS_MIN_ANSWERS (иначе сильный кандидат
+    не наберёт ответов на индекс готовности); короткое интервью — до max_q.
+    """
+    return max(min_q, min(READINESS_MIN_ANSWERS, max_q))
+
+
 def should_stop_interview(
     asked: int,
     min_q: int,
@@ -80,9 +89,7 @@ def should_stop_interview(
 ) -> bool:
     if asked >= max_q:
         return True
-    # Раньше READINESS_MIN_ANSWERS вопросов не останавливаемся, иначе сильный
-    # кандидат не наберёт ответов на индекс готовности.
-    if asked < max(min_q, min(READINESS_MIN_ANSWERS, max_q)):
+    if asked < earliest_stop(min_q, max_q):
         return False
 
     if required_skills:

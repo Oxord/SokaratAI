@@ -506,6 +506,16 @@
   let timerHandle = null;
   let recorder = null;
 
+  // Высота над сообщением: шапка + полоса прогресса (как scroll-margin-top у .thread > *).
+  const VIEW_TOP_GAP = 84;
+
+  // «из ~M»: M — с какого вопроса интервью может закончиться само (expected с сервера).
+  // Когда M достигнут или совпадает с максимумом — показываем жёсткий максимум без «~».
+  function expectedTotal(q) {
+    const expected = q.expected ?? q.max;
+    return expected >= q.max || q.number > expected ? `${q.max}` : `~${expected}`;
+  }
+
   function stopTimer() { if (timerHandle) { clearInterval(timerHandle); timerHandle = null; } }
 
   function starView(star) {
@@ -557,7 +567,8 @@
     const ta = h('textarea', { placeholder: 'Напиши ответ… (Ctrl+Enter — отправить)', rows: 3 });
     const sendBtn = h('button', { class: 'btn btn-primary' }, 'Отправить');
     const skipBtn = h('button', { class: 'btn btn-ghost' }, 'Пропустить');
-    const finishBtn = h('button', { class: 'btn btn-plain' }, '🏁 Завершить');
+    const finishBtn = h('button', { class: 'btn btn-plain', 'aria-label': 'Завершить', title: 'Завершить интервью' },
+      h('span', {}, '🏁', h('span', { class: 'finish-label' }, ' Завершить')));
     const micBtn = S.config.stt ? h('button', { class: 'btn btn-ghost mic', title: 'Ответить голосом' }, '🎤') : null;
     const actions = h('div', { class: 'composer-actions' }, sendBtn, skipBtn, micBtn, h('span', { class: 'grow' }), finishBtn);
     const composer = h('div', { class: 'composer' }, h('div', { class: 'composer-inner' }, ta, actions));
@@ -565,18 +576,30 @@
     let current = q, startedAt = Date.now(), busy = false;
 
     // Прокрутка к новому сообщению так, чтобы оно целиком было над панелью ввода.
+    // С visualViewport учитываем экранную клавиатуру: если сообщение не влезает
+    // в видимую область, показываем его начало (текст вопроса), а не конец.
+    const vv = window.visualViewport;
     function scrollDown(el) {
       const target = el || thread.lastElementChild;
       if (!target) return;
-      target.style.scrollMarginBottom = `${composer.offsetHeight + 20}px`;
-      requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'end' }));
+      const keyboard = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
+      target.style.scrollMarginBottom = `${composer.offsetHeight + keyboard + 20}px`;
+      const tall = vv && target.offsetHeight > vv.height - composer.offsetHeight - VIEW_TOP_GAP;
+      requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: tall ? 'start' : 'end' }));
+    }
+    if (vv) {
+      const onViewportResize = () => {
+        if (!composer.isConnected) { vv.removeEventListener('resize', onViewportResize); return; }
+        scrollDown();
+      };
+      vv.addEventListener('resize', onViewportResize);
     }
     function setBusy(v) { busy = v; for (const b of [sendBtn, skipBtn, finishBtn, micBtn]) if (b) b.disabled = v; ta.disabled = v; }
 
     function showQuestion(question) {
       current = question;
       startedAt = Date.now();
-      counter.textContent = `Вопрос ${question.number} из ${question.max}`;
+      counter.textContent = `Вопрос ${question.number} из ${expectedTotal(question)}`;
       bar.style.width = `${Math.min(100, Math.round(((question.number - 1) / question.max) * 100))}%`;
       const qMsg = h('div', { class: 'msg' },
         h('div', { class: 'avatar' }, h('img', { src: '/static/mascot.png', alt: '' })),

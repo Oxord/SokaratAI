@@ -317,3 +317,29 @@ def test_other_vacancies_ignore_old_formula_sessions(tmp_path):
         }), encoding="utf-8")
 
     assert [o["company"] for o in other_vacancies("u", "Other", "now", tmp_path)] == ["Co-bb"]
+
+
+# ── ожидаемая длина интервью (счётчик «Вопрос N из ~M») ─────────────────────
+
+@pytest.mark.parametrize(
+    ("min_q", "max_q", "expected"),
+    [(4, 6, 6), (6, 10, 8), (8, 14, 8), (10, 18, 10), (14, 20, 14), (5, 5, 5)],
+)
+def test_earliest_stop_matches_stop_rule(min_q, max_q, expected):
+    from sokrat.interview_rules import earliest_stop
+
+    strong = [_entry(9)] * max_q
+
+    assert earliest_stop(min_q, max_q) == expected
+    assert should_stop_interview(expected - 1, min_q, max_q, strong[: expected - 1], []) is False
+
+
+def test_question_view_exposes_expected_length():
+    from sokrat.engine import Engine, Interview
+
+    iv = Interview(id="x", min_q=6, max_q=10, questions=[{"question": "q"}])
+
+    view = Engine._question_view(Engine.__new__(Engine), iv)
+
+    assert view["expected"] == 8
+    assert view["max"] == 10

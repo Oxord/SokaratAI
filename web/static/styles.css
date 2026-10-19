@@ -312,6 +312,9 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--b
 }
 @media (max-width: 480px) {
   .nav-user { display: none; }
+  .finish-label { display: none; }
+  .composer textarea { min-height: 56px; height: 56px; }
+  .composer-actions { flex-wrap: nowrap; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
