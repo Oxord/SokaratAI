@@ -13,3 +13,6 @@ data/sessions/
 *.egg-info/
 data/users.json
 data/.secret
+# eval: в репо только скрипт и baseline-промпт; разметка и прогоны — в .local/eval/
+eval/*.jsonl
+eval/report*.md
