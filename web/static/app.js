@@ -508,6 +508,10 @@
 
   // Высота над сообщением: шапка + полоса прогресса (как scroll-margin-top у .thread > *).
   const VIEW_TOP_GAP = 84;
+  // «У дна» чата: ближе этого к низу страницы — автоскролл допустим.
+  const AT_BOTTOM_PX = 80;
+  // Скачок высоты visualViewport от клавиатуры; меньшие — адресная строка при скролле.
+  const KEYBOARD_MIN_DELTA = 120;
 
   // «из ~M»: M — с какого вопроса интервью может закончиться само (expected с сервера).
   // Когда M достигнут или совпадает с максимумом — показываем жёсткий максимум без «~».
@@ -587,11 +591,26 @@
       const tall = vv && target.offsetHeight > vv.height - composer.offsetHeight - VIEW_TOP_GAP;
       requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: tall ? 'start' : 'end' }));
     }
+    // На resize (клавиатура открылась/закрылась) догоняем последнее сообщение, только если
+    // пользователь был у дна и печатает. Адресная строка при скролле даёт мелкие изменения
+    // высоты — их игнорируем, иначе чат прыгает, пока человек читает старый фидбэк.
+    // Новые сообщения после отправки ответа прокручиваются всегда (scrollDown из send/handleResult).
     if (vv) {
+      const distanceToBottom = () => document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
+      let nearBottom = true;
+      let lastHeight = vv.height;
+      const onScroll = () => {
+        if (!composer.isConnected) { window.removeEventListener('scroll', onScroll); return; }
+        nearBottom = distanceToBottom() <= AT_BOTTOM_PX;
+      };
       const onViewportResize = () => {
         if (!composer.isConnected) { vv.removeEventListener('resize', onViewportResize); return; }
+        const delta = Math.abs(vv.height - lastHeight);
+        lastHeight = vv.height;
+        if (document.activeElement !== ta || delta < KEYBOARD_MIN_DELTA || !nearBottom) return;
         scrollDown();
       };
+      window.addEventListener('scroll', onScroll, { passive: true });
       vv.addEventListener('resize', onViewportResize);
     }
     function setBusy(v) { busy = v; for (const b of [sendBtn, skipBtn, finishBtn, micBtn]) if (b) b.disabled = v; ta.disabled = v; }
