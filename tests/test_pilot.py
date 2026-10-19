@@ -77,3 +77,21 @@ def test_feedback_endpoint_validates(client):
 
 def test_delete_data_requires_login(client):
     assert client.post("/api/account/delete-data", json={"password": "x"}).status_code == 401
+
+
+def test_metrics_counts_and_logs_5xx(tmp_path):
+    from sokrat.metrics import Metrics
+
+    m = Metrics()
+    err = tmp_path / "errors.jsonl"
+    m.record("POST /a", 200, 0.5, errors_path=err)
+    m.record("POST /a", 429, 0.1, errors_path=err)
+    m.record("POST /a", 500, 1.5, errors_path=err)
+    snap = m.snapshot()["routes"]["POST /a"]
+    assert snap["count"] == 3 and snap["4xx"] == 1 and snap["5xx"] == 1 and snap["max_s"] == 1.5
+    assert len(err.read_text().splitlines()) == 1
+
+
+def test_active_and_admin_require_login(client):
+    assert client.get("/api/interviews/active").status_code == 401
+    assert client.get("/api/admin/stats").status_code == 401

@@ -122,15 +122,45 @@
         pass, h('div', {}, btn)));
   }
 
+  // ── продолжить прерванное интервью ────────────────────────────────────────
+  let activeLoaded = false;
+  async function resumeBanner(page) {
+    if (activeLoaded) return;
+    activeLoaded = true;
+    try {
+      const res = await fetch('/api/interviews/active', { credentials: 'same-origin' });
+      const list = res.ok ? await res.json() : [];
+      if (list.length && !page.querySelector('#pilot-resume') && location.hash === '#/cabinet') {
+        const iv = list[0];
+        page.prepend(h('div', { class: 'info-box', id: 'pilot-resume' },
+          `У тебя есть незавершённое интервью: ${iv.role}${iv.level ? ' · ' + iv.level : ''}, отвечено ${iv.answered}. `,
+          h('a', { href: `#/interview/${iv.id}` }, 'Продолжить')));
+      }
+    } catch (e) { /* баннер необязателен */ }
+    activeLoaded = false;
+  }
+
+  // ── сохранить отчёт в PDF (печать браузера) ───────────────────────────────
+  function printButton(page) {
+    const bar = page.querySelector('.sticky-actions');
+    if (!bar || bar.querySelector('#pilot-print')) return;
+    bar.append(h('button', { type: 'button', class: 'btn btn-ghost', id: 'pilot-print', onclick: () => {
+      page.querySelectorAll('details.acc').forEach((d) => { d.open = true; });
+      window.print();
+    } }, '🖨 PDF'));
+  }
+
   // ── достройка страниц ─────────────────────────────────────────────────────
   function enhance() {
     const page = root.querySelector('.container.report');
     if (!page) return;
     const [, a, b] = (location.hash || '').split('/');
+    if ((a === 'report' || a === 'saved') && b) printButton(page);
     if ((a === 'report' || a === 'saved') && b && !page.querySelector('#pilot-feedback')) {
       page.append(feedbackPanel(b));
-    } else if (a === 'cabinet' && !page.querySelector('#pilot-privacy')) {
-      page.append(privacyPanel());
+    } else if (a === 'cabinet') {
+      if (!page.querySelector('#pilot-privacy')) page.append(privacyPanel());
+      if (!page.querySelector('#pilot-resume')) resumeBanner(page);
     }
   }
 

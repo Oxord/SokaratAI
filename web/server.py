@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from sokrat.config import SESSIONS_DIR
-from sokrat.feedback import save_feedback
+from sokrat.feedback import save_feedback, summary as feedback_summary
 from sokrat.engine import (
     PRESET_ROLES,
     EngineError,
@@ -35,6 +36,7 @@ from sokrat.interview_rules import (
     LEVELS,
 )
 from sokrat.llm import llm_configured
+from sokrat.metrics import metrics
 from sokrat.privacy import delete_user_data
 from sokrat.personas import PERSONAS
 from sokrat.practice import KINDS as PRACTICE_KINDS
@@ -68,7 +70,15 @@ _throttle = LoginThrottle()
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    started = time.perf_counter()
     response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        route = request.scope.get("route")
+        metrics.record(
+            f"{request.method} {getattr(route, 'path', request.url.path)}",
+            response.status_code,
+            time.perf_counter() - started,
+        )
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "same-origin")
@@ -248,6 +258,24 @@ class SolutionBody(BaseModel):
 def create_interview(user: str = Depends(current_user)) -> dict[str, Any]:
     iv = engine.create(user)
     return engine.setup_view(iv)
+
+
+@app.get("/api/interviews/active")
+def active_interviews(user: str = Depends(require_user)) -> list[dict[str, Any]]:
+    """Незавершённые интервью пользователя в памяти сервера — чтобы продолжить после закрытия вкладки."""
+    with engine._guard:
+        live = list(engine._sessions.values())
+    return [
+        {
+            "id": iv.id,
+            "role": iv.role,
+            "level": iv.level,
+            "answered": len(iv.answers),
+            "started": iv.created_at,
+        }
+        for iv in sorted(live, key=lambda i: i.touched_at, reverse=True)
+        if iv.user_id == user and iv.step == "interview"
+    ][:3]
 
 
 @app.get("/api/interviews/{interview_id}")
@@ -515,6 +543,19 @@ def feedback(body: FeedbackBody, user: str = Depends(current_user)) -> dict[str,
         comment=body.comment,
     )
     return {"ok": True}
+
+
+_ADMINS = {
+    u.strip().lower() for u in os.getenv("SOKRAT_ADMIN_USERS", "").split(",") if u.strip()
+}
+
+
+@app.get("/api/admin/stats")
+def admin_stats(user: str = Depends(require_user)) -> dict[str, Any]:
+    """Метрики пилота для владельца: запросы, ошибки, отзывы. Доступ — SOKRAT_ADMIN_USERS."""
+    if user not in _ADMINS:
+        raise HTTPException(status_code=404, detail="Не найдено.")
+    return {"metrics": metrics.snapshot(), "feedback": feedback_summary()}
 
 
 class DeleteDataBody(BaseModel):
