@@ -8,6 +8,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
+from .key_points import validate_key_points
 from .llm import extract_text, get_chat_model_for
 from .prompts import load_prompt
 
@@ -109,16 +110,21 @@ def generate_questions(
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
-        out.append(
-            {
-                "id": f"gen_{uuid.uuid4().hex[:10]}",
-                "question": question,
-                "hints": _coerce_str_list(item.get("hints"), _MAX_HINTS),
-                "ideal_keywords": _coerce_str_list(
-                    item.get("ideal_keywords"), _MAX_KEYWORDS
-                ),
-            }
-        )
+        generated = {
+            "id": f"gen_{uuid.uuid4().hex[:10]}",
+            "question": question,
+            "hints": _coerce_str_list(item.get("hints"), _MAX_HINTS),
+            "ideal_keywords": _coerce_str_list(
+                item.get("ideal_keywords"), _MAX_KEYWORDS
+            ),
+        }
+        key_points = validate_key_points(item.get("key_points"))
+        if key_points:
+            generated = {**generated, "key_points": key_points, "key_points_source": "llm"}
+        else:
+            # Без пунктов судья составит их сам по ideal_keywords — вопрос всё равно годен.
+            log.info("question generator: key_points отсутствуют или невалидны, вопрос без них")
+        out.append(generated)
         if len(out) >= count:
             break
     return out

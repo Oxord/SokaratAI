@@ -6,6 +6,10 @@ from ..analyzer import analyze_answer_llm, filter_skills_touched
 from ..state import InterviewState
 from ..utils.errors import format_error
 
+# Закрывающий тег блока ответа в analyzer.txt. Вырезаем его из текста пользователя,
+# чтобы нельзя было «закрыть» блок и дописать инструкции оценщику.
+_ANSWER_CLOSE_TAG = "</candidate_answer>"
+
 
 def analyze_answer_node(state: InterviewState) -> dict[str, Any]:
     """Run LLM analysis on the user's answer to the current question.
@@ -27,6 +31,9 @@ def analyze_answer_node(state: InterviewState) -> dict[str, Any]:
     current_question = state.get("current_question") or {}
     errors = list(state.get("errors") or [])
 
+    # Эталонные пункты для судьи: пока из ideal_keywords (есть в банке и у генератора).
+    key_points = [str(k) for k in (current_question.get("ideal_keywords") or []) if str(k).strip()]
+
     try:
         evaluation = analyze_answer_llm(
             role=role,
@@ -34,7 +41,8 @@ def analyze_answer_node(state: InterviewState) -> dict[str, Any]:
             interview_type=interview_type,
             question=current_question.get("question", ""),
             hints=current_question.get("hints", []) or [],
-            answer=user_input,
+            key_points=key_points,
+            answer=user_input.replace(_ANSWER_CLOSE_TAG, ""),
             clarifications_used=clarifications_used,
             required_skills=required_skills,
             elapsed_seconds=elapsed_seconds,

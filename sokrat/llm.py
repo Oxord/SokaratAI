@@ -8,13 +8,18 @@ from langchain_openai import ChatOpenAI
 from .config import settings
 
 
-@lru_cache(maxsize=8)
-def get_chat_model_for(category: str = "tech", temperature: float = 0.7) -> ChatOpenAI:
+def model_name_for(category: str = "tech") -> str:
+    """Имя модели, которую get_chat_model_for возьмёт для этой категории."""
     model_by_category = {
         "tech": settings.MODEL_TECH,
         "general": settings.MODEL_GENERAL,
     }
-    model = model_by_category.get(category, settings.MODEL_TECH)
+    return model_by_category.get(category, settings.MODEL_TECH)
+
+
+@lru_cache(maxsize=8)
+def get_chat_model_for(category: str = "tech", temperature: float = 0.7) -> ChatOpenAI:
+    model = model_name_for(category)
     headers = None
     if settings.LLM_PROVIDER == "openrouter":
         headers = {
