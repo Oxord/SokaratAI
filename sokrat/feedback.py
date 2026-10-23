@@ -98,3 +98,13 @@ def summary(path: Path | None = None) -> dict[str, Any]:
         return round(sum(vals) / len(vals), 2) if vals else None
 
     return {"count": len(records), "avg_rating": avg("rating"), "avg_realism": avg("realism")}
+
+
+def recent_comments(limit: int = 20, *, path: Path | None = None) -> list[dict[str, Any]]:
+    """Последние отзывы с комментарием (без логина пользователя)."""
+    rows = [r for r in _read(path or FEEDBACK_PATH) if r.get("comment")]
+    rows.sort(key=lambda r: r.get("ts", ""), reverse=True)
+    return [
+        {"ts": r.get("ts"), "rating": r.get("rating"), "realism": r.get("realism"), "comment": r["comment"]}
+        for r in rows[:limit]
+    ]

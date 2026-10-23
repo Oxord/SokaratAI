@@ -19,8 +19,11 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from sokrat import cohorts
 from sokrat.config import SESSIONS_DIR
-from sokrat.feedback import save_feedback, summary as feedback_summary
+from sokrat.analytics import aggregate as aggregate_sessions
+from sokrat.feedback import recent_comments, save_feedback, summary as feedback_summary
+from sokrat.question_ratings import rate_question, worst_questions
 from sokrat.engine import (
     PRESET_ROLES,
     EngineError,
@@ -36,7 +39,8 @@ from sokrat.interview_rules import (
     LEVELS,
 )
 from sokrat.llm import llm_configured
-from sokrat.metrics import metrics
+from sokrat.metrics import funnel, metrics
+from sokrat.pilot_stats import pilot_stats
 from sokrat.privacy import delete_user_data
 from sokrat.personas import PERSONAS
 from sokrat.practice import KINDS as PRACTICE_KINDS
@@ -78,6 +82,7 @@ async def security_headers(request: Request, call_next):
             f"{request.method} {getattr(route, 'path', request.url.path)}",
             response.status_code,
             time.perf_counter() - started,
+            is_user=bool(read_token(request.cookies.get(COOKIE_NAME))),
         )
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
@@ -558,6 +563,93 @@ def admin_stats(user: str = Depends(require_user)) -> dict[str, Any]:
     return {"metrics": metrics.snapshot(), "feedback": feedback_summary()}
 
 
+@app.get("/api/admin/analytics")
+def admin_analytics(user: str = Depends(require_user)) -> dict[str, Any]:
+    """Сводка для владельца: агрегаты по сессиям (без ответов), отзывы, слабые вопросы."""
+    if user not in _ADMINS:
+        raise HTTPException(status_code=404, detail="Не найдено.")
+    return {
+        "sessions": aggregate_sessions(),
+        "feedback": feedback_summary(),
+        "comments": recent_comments(),
+        "weak_questions": worst_questions(),
+        "funnel": funnel(),
+        "pilot": pilot_stats(),
+    }
+
+
+# ── группы (вузы, курсы) ─────────────────────────────────────────────────────
+
+def require_admin(user: str = Depends(require_user)) -> str:
+    if user not in _ADMINS:
+        raise HTTPException(status_code=404, detail="Не найдено.")
+    return user
+
+
+class CohortBody(BaseModel):
+    name: str = Field(max_length=80)
+
+
+class JoinBody(BaseModel):
+    code: str = Field(max_length=20)
+
+
+@app.post("/api/cohorts")
+def cohort_create(body: CohortBody, user: str = Depends(require_admin)) -> dict[str, str]:
+    try:
+        return {"code": cohorts.create_cohort(body.name, user)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/cohorts")
+def cohort_list(_: str = Depends(require_admin)) -> list[dict[str, Any]]:
+    return cohorts.list_cohorts()
+
+
+@app.get("/api/cohorts/{code}/stats")
+def cohort_stats(code: str, _: str = Depends(require_admin)) -> dict[str, Any]:
+    stats = cohorts.cohort_stats(code)
+    if stats is None:
+        raise HTTPException(status_code=404, detail="Группа не найдена.")
+    return stats
+
+
+@app.get("/api/cohort")
+def my_cohort(user: str = Depends(require_user)) -> dict[str, Any]:
+    return {"cohort": cohorts.user_cohort(user)}
+
+
+@app.post("/api/cohort/join", dependencies=[Depends(heavy_limit)])
+def cohort_join(body: JoinBody, user: str = Depends(require_user)) -> dict[str, Any]:
+    name = cohorts.join(user, body.code)
+    if name is None:
+        raise HTTPException(status_code=404, detail="Группы с таким кодом нет.")
+    return {"cohort": {"code": body.code.strip().upper(), "name": name}}
+
+
+@app.post("/api/cohort/leave")
+def cohort_leave(user: str = Depends(require_user)) -> dict[str, bool]:
+    return {"ok": cohorts.leave(user)}
+
+
+class QuestionRatingBody(BaseModel):
+    session_id: str = Field(max_length=64)
+    question: str = Field(max_length=600)
+    value: int = Field(ge=-1, le=1)
+    role: str = Field(default="", max_length=100)
+
+
+@app.post("/api/question-rating", dependencies=[Depends(heavy_limit)])
+def question_rating(body: QuestionRatingBody, user: str = Depends(current_user)) -> dict[str, bool]:
+    if not _SESSION_ID_RE.match(body.session_id) or body.value == 0 or not body.question.strip():
+        raise HTTPException(status_code=400, detail="Некорректная оценка.")
+    rate_question(
+        session_id=body.session_id, user=user, question=body.question, value=body.value, role=body.role
+    )
+    return {"ok": True}
+
+
 class DeleteDataBody(BaseModel):
     password: str = Field(max_length=200)
     delete_account: bool = False
@@ -585,6 +677,12 @@ def delete_data(
 
 app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR)), name="public")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/admin")
+def admin_page() -> FileResponse:
+    # Страница сама по себе безвредна: данные отдаются только админам через /api/admin/*.
+    return FileResponse(STATIC_DIR / "admin.html")
 
 
 @app.get("/")

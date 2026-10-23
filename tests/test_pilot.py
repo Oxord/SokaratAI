@@ -56,7 +56,11 @@ def client(tmp_path, monkeypatch):
     from web import server
 
     ratelimit.limiter.reset()
+    from sokrat import metrics as metrics_mod
+
     monkeypatch.setattr(feedback, "FEEDBACK_PATH", tmp_path / "fb.jsonl")
+    monkeypatch.setattr(metrics_mod, "EVENTS_PATH", tmp_path / "events.jsonl")
+    monkeypatch.setattr(metrics_mod, "ERRORS_PATH", tmp_path / "errors.jsonl")
     monkeypatch.setattr(server, "INTERVIEWS_PER_DAY_GUEST", 2)
     return TestClient(server.app)
 
@@ -95,3 +99,86 @@ def test_metrics_counts_and_logs_5xx(tmp_path):
 def test_active_and_admin_require_login(client):
     assert client.get("/api/interviews/active").status_code == 401
     assert client.get("/api/admin/stats").status_code == 401
+
+
+def test_question_ratings_replace_and_rank(tmp_path):
+    from sokrat import question_ratings as qr
+
+    path = tmp_path / "qr.jsonl"
+    qr.rate_question(session_id="s1", user="a", question="Что такое GIL?", value=1, path=path)
+    qr.rate_question(session_id="s1", user="a", question="что  такое gil?", value=-1, path=path)  # замена
+    qr.rate_question(session_id="s2", user="b", question="Что такое GIL?", value=-1, path=path)
+    qr.rate_question(session_id="s2", user="b", question="Хороший вопрос", value=1, path=path)
+    worst = qr.worst_questions(path=path)
+    assert len(worst) == 1 and worst[0]["down"] == 2 and worst[0]["up"] == 0
+    assert qr.delete_user_ratings("a", path=path) == 1
+
+
+def test_admin_and_rating_endpoints(client):
+    assert client.get("/api/admin/analytics").status_code == 401
+    assert client.get("/admin").status_code == 200
+    r = client.post("/api/question-rating", json={"session_id": "abcdef12-3456", "question": "Q?", "value": 0})
+    assert r.status_code == 400
+
+
+def test_funnel_and_events(tmp_path):
+    from sokrat.metrics import Metrics, funnel
+
+    ev = tmp_path / "events.jsonl"
+    m = Metrics()
+    for route in ("POST /api/interviews", "POST /api/interviews", "POST /api/interviews/{interview_id}/start",
+                  "POST /api/interviews/{interview_id}/finish"):
+        m.record(route, 200, 0.1, errors_path=tmp_path / "e.jsonl", events_path=ev)
+    m.record("POST /api/interviews", 429, 0.1, errors_path=tmp_path / "e.jsonl", events_path=ev)  # не считается
+    f = funnel(ev)
+    assert f["created"] == 2 and f["started"] == 1 and f["finished"] == 1
+    assert f["start_rate"] == 50.0 and f["finish_rate"] == 100.0
+
+
+def test_pilot_stats(tmp_path):
+    from sokrat.pilot_stats import pilot_stats
+
+    def sess(name, user, ts, pct, vacancy=False):
+        d = {"user_id": user, "finished_at": ts, "started_at": ts.replace("T10", "T09"),
+             "summary": {"percentage": pct}, "scores": [{}] * 5}
+        if vacancy:
+            d["job_vacancy"] = {"company": "X"}
+        (tmp_path / f"{name}.json").write_text(json.dumps(d))
+
+    sess("1", "a", "2026-10-01T10:00:00", 40, True)
+    sess("2", "a", "2026-10-02T10:00:00", 50)
+    sess("3", "a", "2026-10-03T10:00:00", 70)
+    sess("4", "b", "2026-10-01T10:00:00", 60)
+    st = pilot_stats(tmp_path)
+    assert st["sessions"] == 4 and st["vacancy_share"] == 25.0
+    assert st["users"] == 2 and st["returning_share"] == 50.0
+    assert st["avg_growth_pp"] == 30.0 and st["avg_minutes"] == 60.0
+
+
+def test_cohorts_flow(tmp_path):
+    from sokrat import cohorts
+
+    store = tmp_path / "c.json"
+    sessions = tmp_path / "s"
+    sessions.mkdir()
+    for i, (user, pct) in enumerate([("ann", 50), ("ann", 70), ("bob", 30), ("eve", 90)]):
+        (sessions / f"{i}.json").write_text(json.dumps({
+            "session_id": str(i), "user_id": user, "finished_at": f"2026-10-0{i + 1}T10:00:00",
+            "summary": {"percentage": pct, "dimensions": {}}}))
+    code = cohorts.create_cohort("ИТ-31", "admin", path=store)
+    assert cohorts.join("ann", code.lower(), path=store) == "ИТ-31"
+    assert cohorts.join("bob", code, path=store) == "ИТ-31"
+    assert cohorts.join("bob", "NOPE12", path=store) is None
+    assert cohorts.user_cohort("ann", path=store)["code"] == code
+    st = cohorts.cohort_stats(code, path=store, sessions_dir=sessions)
+    assert st["members"] == 2 and st["sessions"] == 3  # eve не в группе
+    assert st["rows"][0]["user"] == "ann" and st["rows"][0]["trend"] == 20.0
+    assert cohorts.leave("bob", path=store) and not cohorts.leave("bob", path=store)
+    assert cohorts.cohort_stats("ZZZZZZ", path=store) is None
+    with pytest.raises(ValueError):
+        cohorts.create_cohort("  ", "admin", path=store)
+
+
+def test_cohort_endpoints_closed_to_non_admins(client):
+    assert client.get("/api/cohorts").status_code == 401
+    assert client.post("/api/cohort/join", json={"code": "ABC"}).status_code == 401

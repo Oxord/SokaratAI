@@ -323,3 +323,4 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--b
   .sticky-actions, #pilot-feedback, #pilot-privacy, #toast { display: none !important; }
   .panel, details.acc { break-inside: avoid; box-shadow: none; }
 }
+.pilot-qrate { margin-top: 10px; font-size: .92rem; }
