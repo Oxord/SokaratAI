@@ -56,7 +56,11 @@ def client(tmp_path, monkeypatch):
     from web import server
 
     ratelimit.limiter.reset()
+    from sokrat import metrics as metrics_mod
+
     monkeypatch.setattr(feedback, "FEEDBACK_PATH", tmp_path / "fb.jsonl")
+    monkeypatch.setattr(metrics_mod, "EVENTS_PATH", tmp_path / "events.jsonl")
+    monkeypatch.setattr(metrics_mod, "ERRORS_PATH", tmp_path / "errors.jsonl")
     monkeypatch.setattr(server, "INTERVIEWS_PER_DAY_GUEST", 2)
     return TestClient(server.app)
 
@@ -149,3 +153,32 @@ def test_pilot_stats(tmp_path):
     assert st["sessions"] == 4 and st["vacancy_share"] == 25.0
     assert st["users"] == 2 and st["returning_share"] == 50.0
     assert st["avg_growth_pp"] == 30.0 and st["avg_minutes"] == 60.0
+
+
+def test_cohorts_flow(tmp_path):
+    from sokrat import cohorts
+
+    store = tmp_path / "c.json"
+    sessions = tmp_path / "s"
+    sessions.mkdir()
+    for i, (user, pct) in enumerate([("ann", 50), ("ann", 70), ("bob", 30), ("eve", 90)]):
+        (sessions / f"{i}.json").write_text(json.dumps({
+            "session_id": str(i), "user_id": user, "finished_at": f"2026-10-0{i + 1}T10:00:00",
+            "summary": {"percentage": pct, "dimensions": {}}}))
+    code = cohorts.create_cohort("ИТ-31", "admin", path=store)
+    assert cohorts.join("ann", code.lower(), path=store) == "ИТ-31"
+    assert cohorts.join("bob", code, path=store) == "ИТ-31"
+    assert cohorts.join("bob", "NOPE12", path=store) is None
+    assert cohorts.user_cohort("ann", path=store)["code"] == code
+    st = cohorts.cohort_stats(code, path=store, sessions_dir=sessions)
+    assert st["members"] == 2 and st["sessions"] == 3  # eve не в группе
+    assert st["rows"][0]["user"] == "ann" and st["rows"][0]["trend"] == 20.0
+    assert cohorts.leave("bob", path=store) and not cohorts.leave("bob", path=store)
+    assert cohorts.cohort_stats("ZZZZZZ", path=store) is None
+    with pytest.raises(ValueError):
+        cohorts.create_cohort("  ", "admin", path=store)
+
+
+def test_cohort_endpoints_closed_to_non_admins(client):
+    assert client.get("/api/cohorts").status_code == 401
+    assert client.post("/api/cohort/join", json={"code": "ABC"}).status_code == 401
