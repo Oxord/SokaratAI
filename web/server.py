@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from sokrat.analytics import aggregate as analytics_aggregate
 from sokrat.config import SESSIONS_DIR
 from sokrat.feedback import save_feedback, summary as feedback_summary
 from sokrat.engine import (
@@ -558,6 +559,14 @@ def admin_stats(user: str = Depends(require_user)) -> dict[str, Any]:
     return {"metrics": metrics.snapshot(), "feedback": feedback_summary()}
 
 
+@app.get("/api/admin/analytics")
+def admin_analytics(role: str | None = None, user: str = Depends(require_user)) -> dict[str, Any]:
+    """Групповая аналитика по всем сессиям — B2B-кабинет для вузов и HR. Доступ — SOKRAT_ADMIN_USERS."""
+    if user not in _ADMINS:
+        raise HTTPException(status_code=404, detail="Не найдено.")
+    return analytics_aggregate(role=role)
+
+
 class DeleteDataBody(BaseModel):
     password: str = Field(max_length=200)
     delete_account: bool = False
@@ -590,3 +599,13 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/b2b")
+def b2b_page() -> FileResponse:
+    """B2B-кабинет для вузов/карьерных центров/HR — отдельная страница, вне SPA-роутера.
+
+    Доступ гейтится на уровне API (/api/admin/analytics, /api/admin/stats):
+    страница загружается всем, но данные видят только логины из SOKRAT_ADMIN_USERS.
+    """
+    return FileResponse(STATIC_DIR / "b2b.html")
