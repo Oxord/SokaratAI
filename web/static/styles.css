@@ -314,3 +314,12 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--b
 }
 
 .row select { width: auto; min-width: 200px; }
+
+/* Пилот: форма отзыва и блок «Мои данные» (web/static/pilot.js) */
+.pilot-rate { display: flex; gap: 8px; flex-wrap: wrap; }
+.pilot-rate .btn { min-width: 44px; }
+
+@media print {
+  .sticky-actions, #pilot-feedback, #pilot-privacy, #toast { display: none !important; }
+  .panel, details.acc { break-inside: avoid; box-shadow: none; }
+}
