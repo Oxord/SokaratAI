@@ -28,9 +28,10 @@ class Settings:
 
 _DEFAULT_QUESTIONS_COUNT: int = 7
 _DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-# deepseek-chat поддерживает JSON-режим и temperature; deepseek-reasoner — нет,
-# поэтому по умолчанию используем именно chat.
-_DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
+# deepseek-chat выведен 24.07.2026. deepseek-flash есть в /models и поддерживает
+# JSON-режим (проверка: python -m sokrat.llm_check). deepseek-reasoner не подходит:
+# нет JSON-режима и temperature.
+_DEEPSEEK_DEFAULT_MODEL = "deepseek-flash"
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 

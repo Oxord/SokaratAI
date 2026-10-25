@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from .analyzer import DIMENSION_LABELS, analyze_answer_llm, filter_skills_touched
+from .analyzer import DIMENSION_LABELS, analyze_answer_llm, filter_skills_touched, prompt_hash
 from .company_profile import CompanyProfile, build_company_profile
 from .gap_analysis import GapAnalysis, analyze_gaps
 from .history import build_dynamics, other_vacancies, recent_weak_topics
@@ -34,6 +34,7 @@ from .interview_rules import (
     should_stop_interview,
     verdict_for_score,
 )
+from .llm import model_name_for
 from .nodes.save_session import save_session_node
 from .personas import (
     DEFAULT_PERSONA,
@@ -55,6 +56,7 @@ from .readiness import compute_readiness
 from .resource_generator import generate_resources
 from .resume_parser import ResumeProfile, extract_resume_text, parse_resume
 from .role_classifier import classify_role
+from .scoring import compute_score
 from .star_analysis import aggregate_star, analyze_star, is_behavioral
 from .study_plan import build_study_plan, collect_focus_areas
 from .summary_builder import compute_summary
@@ -66,6 +68,16 @@ PRESET_ROLES = ["Python Developer", "Frontend Developer", "Product Manager"]
 _SESSION_TTL_SECONDS = 6 * 3600
 _MAX_ANSWER_CHARS = 6000
 _REPORT_QUESTION_CHARS = 400
+
+
+def judge_points(question: dict) -> dict[str, list[str] | None]:
+    """Что передать судье: фиксированные key_points вопроса, если есть, плюс ideal_keywords
+    как нестрогие подсказки темы. Без key_points судья составляет пункты сам, как раньше."""
+    return {
+        "fixed_points": list(question.get("key_points") or []) or None,
+        "bonus_points": list(question.get("bonus_points") or []) or None,
+        "key_points": list(question.get("ideal_keywords") or []),
+    }
 
 
 class EngineError(RuntimeError):
@@ -325,6 +337,7 @@ class Engine:
                 interview_type=iv.interview_type,
                 question=question.get("question", ""),
                 hints=question.get("hints", []) or [],
+                **judge_points(question),
                 answer=answer_text,
                 clarifications_used=clarifications,
                 required_skills=iv.required_skills,
@@ -360,8 +373,31 @@ class Engine:
         if intent == "skip":
             return self._record(iv, question, answer_text, analysis, 0, "skip")
 
-        score = analysis.score if analysis.score is not None else 1
+        score = self._answer_score(analysis)
         return self._record(iv, question, answer_text, analysis, score, "answer")
+
+    @staticmethod
+    def _answer_score(analysis: Any) -> int:
+        # 0 для answer промпт запрещает: summary посчитал бы такой ответ пропущенным.
+        model_score = analysis.score or 1
+        if getattr(analysis, "points_mismatch", False):
+            # Статусы не привязаны к фиксированным пунктам — D по ним считать нельзя.
+            log.warning("analyzer: points_mismatch, беру балл модели %s", model_score)
+            return model_score
+        computed = compute_score(
+            analysis.points, analysis.errors, bonus=analysis.bonus, off_topic=analysis.off_topic,
+            bonus_marks=getattr(analysis, "bonus_marks", None),
+        )
+        if computed is None:
+            # Только структура, без цитат из ответа пользователя.
+            log.warning(
+                "analyzer: points/errors пустые или битые (points=%s, errors=%s), беру балл модели %s",
+                [p.get("status") if isinstance(p, dict) else type(p).__name__ for p in analysis.points],
+                [e.get("core") if isinstance(e, dict) else type(e).__name__ for e in analysis.errors],
+                model_score,
+            )
+            return model_score
+        return computed
 
     def _record(
         self,
@@ -404,6 +440,20 @@ class Engine:
             "pace": pace,
             "elapsed_seconds": round(elapsed, 1),
             "ideal_answer": analysis.ideal_answer if analysis else None,
+            # Разбор судьи и происхождение оценки — для отладки и eval, в UI не выводятся.
+            "score_model": analysis.score if analysis else None,
+            "injection_suspected": analysis.injection_suspected if analysis else None,
+            "off_topic": analysis.off_topic if analysis else None,
+            "bonus": analysis.bonus if analysis else None,
+            "expected_points": list(analysis.expected_points) if analysis else [],
+            "points": list(analysis.points) if analysis else [],
+            "errors": list(analysis.errors) if analysis else [],
+            # Происхождение эталонных пунктов: "llm" — черновик, не проверенный человеком.
+            "key_points_source": question.get("key_points_source") if question.get("key_points") else None,
+            "points_mismatch": bool(getattr(analysis, "points_mismatch", False)) if analysis else False,
+            "bonus_marks": list(getattr(analysis, "bonus_marks", None) or []) if analysis else [],
+            "model": model_name_for(iv.role_category) if analysis else None,
+            "prompt_hash": prompt_hash() if analysis else None,
         }
         iv.answers.append(answer_text)
         iv.scores.append(entry)

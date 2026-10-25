@@ -1,0 +1,3 @@
+# Для разработки и тестов: pip install -r requirements-dev.txt
+-r requirements-web.txt
+pytest==9.1.1
