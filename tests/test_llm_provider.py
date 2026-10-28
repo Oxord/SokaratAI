@@ -47,6 +47,7 @@ def test_anymodel_request_options(load, monkeypatch):
     assert opts["max_tokens"] == 4096 and opts["extra_body"] == {"thinking": {"type": "disabled"}}
     monkeypatch.setenv("LLM_TIMEOUT", "45")
     assert llm._timeout() == 45
+    monkeypatch.delenv("LLM_TIMEOUT")
     load(LLM_PROVIDER="openrouter")
     importlib.reload(llm)
     assert llm._timeout() == 60 and llm._anymodel_options() == {}
