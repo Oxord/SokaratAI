@@ -26,7 +26,7 @@ def test_anymodel_is_default_when_key_set(load):
     s = load(ANYMODEL_API_KEY="k", DEEPSEEK_API_KEY="old")
     assert s.LLM_PROVIDER == "anymodel" and s.LLM_API_KEY == "k"
     assert s.LLM_BASE_URL == "https://anymodel.org/v1"
-    assert s.MODEL_TECH == "ds/deepseek-v4-pro" and s.MODEL_GENERAL == "ds/deepseek-v4-flash"
+    assert s.MODEL_TECH == "cc/claude-sonnet-5" and s.MODEL_GENERAL == "ds/deepseek-v4-flash"
 
 
 def test_overrides_and_fallbacks(load):

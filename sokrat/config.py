@@ -45,10 +45,10 @@ def _safe_int(raw: str | None, default: int) -> int:
 
 
 # AnyModel — OpenAI-совместимый шлюз (https://anymodel.org/app/api-docs). Модели
-# DeepSeek идут через него под id "ds/…": v4-pro — для оценки ответов и вопросов,
-# v4-flash — для остального (дешевле). Проверка JSON-режима: python -m sokrat.llm_check.
+# DeepSeek идут через него под id "ds/…". Технические роли — на Claude Sonnet,
+# остальное — на DeepSeek V4 Flash (дешевле). Проверка JSON-режима: python -m sokrat.llm_check.
 _ANYMODEL_BASE_URL = "https://anymodel.org/v1"
-_ANYMODEL_MODEL_TECH = "ds/deepseek-v4-pro"
+_ANYMODEL_MODEL_TECH = "cc/claude-sonnet-5"
 _ANYMODEL_MODEL_GENERAL = "ds/deepseek-v4-flash"
 
 
