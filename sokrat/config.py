@@ -44,17 +44,39 @@ def _safe_int(raw: str | None, default: int) -> int:
     return value if value > 0 else default
 
 
+# AnyModel — OpenAI-совместимый шлюз (https://anymodel.org/app/api-docs). Модели
+# DeepSeek идут через него под id "ds/…": v4-pro — для оценки ответов и вопросов,
+# v4-flash — для остального (дешевле). Проверка JSON-режима: python -m sokrat.llm_check.
+_ANYMODEL_BASE_URL = "https://anymodel.org/v1"
+_ANYMODEL_MODEL_TECH = "ds/deepseek-v4-pro"
+_ANYMODEL_MODEL_GENERAL = "ds/deepseek-v4-flash"
+
+
 def _resolve_provider() -> str:
     explicit = os.getenv("LLM_PROVIDER", "").strip().lower()
-    if explicit in ("deepseek", "openrouter"):
+    if explicit in ("anymodel", "deepseek", "openrouter"):
         return explicit
-    # Без явного выбора: DeepSeek, если задан его ключ; иначе прежний OpenRouter.
+    # Без явного выбора: AnyModel, если задан его ключ; затем DeepSeek; иначе OpenRouter.
+    if os.getenv("ANYMODEL_API_KEY", "").strip():
+        return "anymodel"
     return "deepseek" if os.getenv("DEEPSEEK_API_KEY", "").strip() else "openrouter"
 
 
 def _load_settings() -> Settings:
     provider = _resolve_provider()
     questions = _safe_int(os.getenv("INTERVIEW_QUESTIONS_COUNT"), _DEFAULT_QUESTIONS_COUNT)
+
+    if provider == "anymodel":
+        return Settings(
+            LLM_PROVIDER=provider,
+            LLM_API_KEY=os.getenv("ANYMODEL_API_KEY", "").strip(),
+            LLM_BASE_URL=os.getenv("ANYMODEL_BASE_URL", "").strip() or _ANYMODEL_BASE_URL,
+            MODEL_TECH=os.getenv("ANYMODEL_MODEL_TECH", "").strip() or _ANYMODEL_MODEL_TECH,
+            MODEL_GENERAL=os.getenv("ANYMODEL_MODEL_GENERAL", "").strip()
+            or _ANYMODEL_MODEL_GENERAL,
+            OPENROUTER_REFERER=None,
+            INTERVIEW_QUESTIONS_COUNT=questions,
+        )
 
     if provider == "deepseek":
         return Settings(

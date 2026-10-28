@@ -7,8 +7,8 @@ services:
     healthCheckPath: /healthz
     envVars:
       - key: LLM_PROVIDER
-        value: deepseek
-      - key: DEEPSEEK_API_KEY
+        value: anymodel
+      - key: ANYMODEL_API_KEY
         sync: false          # вводится вручную в панели Render, в git не хранится
       - key: SOKRAT_SECRET
         generateValue: true  # секрет подписи cookie
