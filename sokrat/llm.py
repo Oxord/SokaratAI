@@ -1,11 +1,36 @@
 from __future__ import annotations
 
+import os
+
 from functools import lru_cache
 from typing import Any
 
 from langchain_openai import ChatOpenAI
 
 from .config import settings
+
+
+def _timeout() -> int:
+    """Секунды на один запрос к LLM. Шлюз AnyModel отвечает ~30 с (до 80 с), поэтому 120."""
+    try:
+        explicit = int(os.getenv("LLM_TIMEOUT", "").strip())
+    except ValueError:
+        explicit = 0
+    if explicit > 0:
+        return explicit
+    return 120 if settings.LLM_PROVIDER == "anymodel" else 60
+
+
+def _anymodel_options() -> dict[str, Any]:
+    """AnyModel резервирует с баланса максимальную цену запроса, поэтому лимитируем ответ;
+    «мышление» DeepSeek выключаем: оно дороже и медленнее, а JSON-ответу не нужно."""
+    if settings.LLM_PROVIDER != "anymodel":
+        return {}
+    try:
+        max_tokens = int(os.getenv("LLM_MAX_TOKENS", "").strip() or 4096)
+    except ValueError:
+        max_tokens = 4096
+    return {"max_tokens": max_tokens, "extra_body": {"thinking": {"type": "disabled"}}}
 
 
 @lru_cache(maxsize=8)
@@ -26,9 +51,10 @@ def get_chat_model_for(category: str = "tech", temperature: float = 0.7) -> Chat
         api_key=settings.LLM_API_KEY or "missing",
         base_url=settings.LLM_BASE_URL,
         temperature=temperature,
-        timeout=60,
+        timeout=_timeout(),
         max_retries=2,
         default_headers=headers,
+        **_anymodel_options(),
     )
 
 

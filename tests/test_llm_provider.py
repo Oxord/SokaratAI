@@ -34,3 +34,19 @@ def test_overrides_and_fallbacks(load):
     assert s.MODEL_TECH == "am/free"
     assert load(DEEPSEEK_API_KEY="d").LLM_PROVIDER == "deepseek"
     assert load().LLM_PROVIDER == "openrouter"
+
+
+def test_anymodel_request_options(load, monkeypatch):
+    load(LLM_PROVIDER="anymodel", ANYMODEL_API_KEY="k")
+    from sokrat import llm
+
+    importlib.reload(llm)
+    monkeypatch.delenv("LLM_TIMEOUT", raising=False)
+    assert llm._timeout() == 120
+    opts = llm._anymodel_options()
+    assert opts["max_tokens"] == 4096 and opts["extra_body"] == {"thinking": {"type": "disabled"}}
+    monkeypatch.setenv("LLM_TIMEOUT", "45")
+    assert llm._timeout() == 45
+    load(LLM_PROVIDER="openrouter")
+    importlib.reload(llm)
+    assert llm._timeout() == 60 and llm._anymodel_options() == {}
