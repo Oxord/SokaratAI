@@ -14,7 +14,7 @@ def main() -> int:
     print(f"Провайдер: {settings.LLM_PROVIDER} · {settings.LLM_BASE_URL}")
     print(f"Модели: tech={settings.MODEL_TECH} · general={settings.MODEL_GENERAL}")
     if not llm_configured():
-        print("✗ API-ключ не задан (DEEPSEEK_API_KEY / OPENROUTER_API_KEY в .env)")
+        print("✗ API-ключ не задан (ANYMODEL_API_KEY / DEEPSEEK_API_KEY / OPENROUTER_API_KEY в .env)")
         return 1
 
     ok = True

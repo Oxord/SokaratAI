@@ -27,9 +27,10 @@ ALLOW_SIGNUP=true   # false — запретить саморегистраци�
 
 ## LLM-провайдер
 
-По умолчанию используется **DeepSeek**: задайте `DEEPSEEK_API_KEY` в `.env`
-(`LLM_PROVIDER=deepseek`). Запасной вариант — OpenRouter (`LLM_PROVIDER=openrouter`
-и `OPENROUTER_API_KEY`). Проверить связь можно командой:
+По умолчанию используется **AnyModel** (OpenAI-совместимый шлюз, внутри DeepSeek V4):
+задайте `ANYMODEL_API_KEY` в `.env` (`LLM_PROVIDER=anymodel`). Прямой DeepSeek
+(`LLM_PROVIDER=deepseek`, `DEEPSEEK_API_KEY`) и OpenRouter (`LLM_PROVIDER=openrouter`,
+`OPENROUTER_API_KEY`) остались запасными. Проверить связь можно командой:
 
 ```
 python -m sokrat.llm_check
@@ -63,7 +64,7 @@ python -m sokrat.llm_check
 GitHub Pages не подходит (нужен Python-сервер). Подойдёт любой хостинг с Docker:
 
 - **Render** (free): New → Blueprint → выбрать репозиторий; `render.yaml` уже настроен.
-  Секрет `DEEPSEEK_API_KEY` вводится в панели Render. Бесплатный сервис «засыпает» после
+  Секрет `ANYMODEL_API_KEY` вводится в панели Render. Бесплатный сервис «засыпает» после
   простоя (первый запрос ~30–60 сек), файловая система временная: пользователи и история
   теряются при перезапуске — для постоянного хранения нужен платный диск.
 - **Hugging Face Spaces** (Docker SDK), **Fly.io**, **Railway** — тот же `Dockerfile`.
@@ -71,7 +72,7 @@ GitHub Pages не подходит (нужен Python-сервер). Подой�
   (или ngrok) — временная публичная HTTPS-ссылка.
 
 Локальная проверка контейнера: `docker build -t sokrat . && docker run -p 8000:8000
--e DEEPSEEK_API_KEY=... sokrat`.
+-e ANYMODEL_API_KEY=... sokrat`.
 
 ### Обновление на своём сервере (Docker)
 
@@ -82,6 +83,6 @@ ssh user@server 'cd /opt/sokrat/src && docker build -t sokrat:latest . \
      -p 8000:8000 --env-file /opt/sokrat/.env -v /opt/sokrat/data:/data sokrat:latest'
 ```
 
-`/opt/sokrat/.env` содержит `DEEPSEEK_API_KEY`, `SESSION_DIR=/data/sessions`,
+`/opt/sokrat/.env` содержит `ANYMODEL_API_KEY`, `SESSION_DIR=/data/sessions`,
 `USERS_PATH=/data/users.json`, `SOKRAT_SECRET_PATH=/data/.secret`. Без HTTPS (доступ по IP)
 нужен `SOKRAT_COOKIE_SECURE=false`; за доменом с HTTPS — `true`.
